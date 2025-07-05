@@ -5,6 +5,7 @@ __pycache__/
 
 # block data
 *.fbx
+*.obj
 
 # C extensions
 *.so
