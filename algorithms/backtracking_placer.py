@@ -1,5 +1,5 @@
 """
-백트래킹 기반 블록 배치 알고리즘 모듈
+백트래킹 기반 블록 배치 알고리즘 모듈 (Y축 우선으로 수정)
 """
 import time
 import copy
@@ -8,7 +8,7 @@ from algorithms.candidate_generator import CandidateGenerator
 
 class BacktrackingPlacer:
     """
-    백트래킹 기반 블록 배치 알고리즘 클래스
+    백트래킹 기반 블록 배치 알고리즘 클래스 (Y축 우선)
 
     Attributes:
         placement_area (PlacementArea): 배치 영역
@@ -42,7 +42,7 @@ class BacktrackingPlacer:
 
     def optimize(self):
         """
-        백트래킹을 통한 최적 배치 탐색
+        백트래킹을 통한 최적 배치 탐색 (Y축 우선)
 
         Returns:
             PlacementArea: 최적 배치 결과
@@ -51,14 +51,14 @@ class BacktrackingPlacer:
         self.best_solution = None
         self.best_score = 0
 
-        # 블록 배치 순서 결정 (복합 기준)
-        # 1. 넓은 블록 우선 (너비 기준) - X축 방향으로 먼저 채우기 위함
+        # 블록 배치 순서 결정 (Y축 우선으로 수정)
+        # 1. 높은 블록 우선 (높이 기준) - Y축 방향으로 먼저 채우기 위함
         # 2. 대형 블록 우선 (면적 기준)
         # 3. 복잡한 모양 우선 (면적 대비 복셀 수)
         sorted_blocks = sorted(
             self.blocks,
             key=lambda block: (
-                block.width,  # 1차 기준: 너비 (X축 방향 우선)
+                block.height,  # 1차 기준: 높이 (Y축 방향 우선)
                 block.get_area(),  # 2차 기준: 면적
                 block.get_area() / (block.width * block.height)  # 3차 기준: 밀도
             ),
@@ -101,7 +101,7 @@ class BacktrackingPlacer:
         # 현재 배치할 블록
         current_block = sorted_blocks[depth]
 
-        # 후보 위치 생성
+        # 후보 위치 생성 (Y축 우선 휴리스틱 사용)
         candidates = self.candidate_generator.generate_candidates(current_block)
 
         # 각 후보 위치에 대해 시도
@@ -128,9 +128,3 @@ class BacktrackingPlacer:
         # 현재 블록을 배치하지 않고 다음 블록으로 진행
         # 이렇게 하면 특정 블록을 건너뛰고 다른 블록을 배치할 수 있음
         self._backtrack(current_area, sorted_blocks, depth + 1)
-
-        # 현재 블록을 배치하지 않고 다음 블록으로 진행 (선택적)
-        # 이 부분은 모든 블록을 반드시 배치해야 하는 경우 주석 처리
-        # self._backtrack(current_area, sorted_blocks, depth + 1)
-
-

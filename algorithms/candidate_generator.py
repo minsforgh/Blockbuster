@@ -1,12 +1,12 @@
 """
-블록 배치 후보 위치 생성기 모듈
+블록 배치 후보 위치 생성기 모듈 (Y축 우선으로 수정)
 """
 import numpy as np
 
 
 class CandidateGenerator:
     """
-    블록 배치 후보 위치 생성기 클래스
+    블록 배치 후보 위치 생성기 클래스 (Y축 우선)
     BinPacking 기반 후보 위치 생성 및 휴리스틱 점수 계산
 
     Attributes:
@@ -68,7 +68,7 @@ class CandidateGenerator:
 
     def _generate_candidates_for_orientation(self, block):
         """
-        현재 블록 방향에 대한 후보 위치 생성
+        현재 블록 방향에 대한 후보 위치 생성 (Y축 우선으로 수정)
 
         Args:
             block (VoxelBlock): 배치할 블록
@@ -78,22 +78,22 @@ class CandidateGenerator:
         """
         candidates = []
 
-        # BinPacking 기반 후보 위치 생성
-        # 1. 왼쪽 아래 모서리 우선 배치 (Bottom-Left 전략)
+        # BinPacking 기반 후보 위치 생성 (Y축 우선으로 수정)
+        # 1. 위쪽 왼쪽 모서리 우선 배치 (Top-Left 전략)
         # 2. 기존 블록에 인접한 위치 우선 배치 (Adjacent 전략)
         # 3. 배치 영역 경계 우선 배치 (Boundary 전략)
 
-        # 배치 영역 전체 탐색 (X축 우선 배치를 위해 Y축 먼저 순회)
-        for y in range(self.placement_area.height):
-            for x in range(self.placement_area.width):
+        # 배치 영역 전체 탐색 (Y축 우선 배치를 위해 X축 먼저 순회)
+        for x in range(self.placement_area.width):
+            for y in range(self.placement_area.height):
                 # 해당 위치에 블록 배치 가능 여부 확인
                 if self.placement_area.can_place_block(block, x, y):
                     # 휴리스틱 점수 계산
                     score = self._calculate_heuristic_score(block, x, y)
 
-                    # Y값이 작을수록 높은 점수 부여 (X축 방향 우선 배치)
-                    y_bonus = 1.0 - (y / self.placement_area.height)
-                    score *= (1.0 + y_bonus)
+                    # X값이 작을수록 높은 점수 부여 (Y축 방향 우선 배치)
+                    x_bonus = 1.0 - (x / self.placement_area.width)
+                    score *= (1.0 + x_bonus)
 
                     candidates.append((x, y, block.rotation, score))
 
@@ -146,7 +146,7 @@ class CandidateGenerator:
 
     def _find_empty_spaces(self):
         """
-        배치 영역의 빈 공간 찾기
+        배치 영역의 빈 공간 찾기 (Y축 우선으로 수정)
 
         Returns:
             list: (x, y, width, height) 형태의 빈 공간 목록
@@ -156,9 +156,9 @@ class CandidateGenerator:
         width = self.placement_area.width
         height = self.placement_area.height
 
-        # 빈 공간 찾기
-        for y in range(height):
-            for x in range(width):
+        # 빈 공간 찾기 (Y축 우선 순서로)
+        for x in range(width):
+            for y in range(height):
                 # 이미 블록이 배치된 위치는 건너뜀
                 if grid[y, x] is not None:
                     continue
@@ -191,16 +191,16 @@ class CandidateGenerator:
 
                 # 빈 공간 추가
                 if max_width > 1 or max_height > 1:
-                    # X축 방향 우선 배치를 위해 Y값이 작은 빈 공간 우선
-                    # Y값이 같은 경우 X값이 작은 빈 공간 우선
+                    # Y축 방향 우선 배치를 위해 X값이 작은 빈 공간 우선
+                    # X값이 같은 경우 Y값이 작은 빈 공간 우선
 
                     # 새로운 빈 공간 정보
                     new_space = (x, y, max_width, max_height)
 
-                    # 빈 공간 목록에 삽입 (Y값 오름차순, Y값이 같으면 X값 오름차순)
+                    # 빈 공간 목록에 삽입 (X값 오름차순, X값이 같으면 Y값 오름차순)
                     inserted = False
                     for i, (sx, sy, sw, sh) in enumerate(empty_spaces):
-                        if y < sy or (y == sy and x < sx):
+                        if x < sx or (x == sx and y < sy):
                             empty_spaces.insert(i, new_space)
                             inserted = True
                             break
@@ -212,7 +212,7 @@ class CandidateGenerator:
 
     def _calculate_heuristic_score(self, block, pos_x, pos_y):
         """
-        휴리스틱 점수 계산
+        휴리스틱 점수 계산 (Y축 우선으로 수정)
 
         Args:
             block (VoxelBlock): 배치할 블록
@@ -222,13 +222,13 @@ class CandidateGenerator:
         Returns:
             float: 휴리스틱 점수 (높을수록 좋음)
         """
-        # 1. X축 우선 배치 점수
-        # X축 방향으로 먼저 채우기 위해 Y값이 작을수록 높은 점수
-        x_first_score = 1.0 - (pos_y / self.placement_area.height)
+        # 1. Y축 우선 배치 점수
+        # Y축 방향으로 먼저 채우기 위해 X값이 작을수록 높은 점수
+        y_first_score = 1.0 - (pos_x / self.placement_area.width)
 
-        # 2. 왼쪽 정렬 점수 (Left 전략)
-        # 왼쪽에 가까울수록 높은 점수
-        left_alignment_score = 1.0 - (pos_x / self.placement_area.width)
+        # 2. 위쪽 정렬 점수 (Top 전략)
+        # 위쪽에 가까울수록 높은 점수
+        top_alignment_score = 1.0 - (pos_y / self.placement_area.height)
 
         # 3. 인접성 점수 (Adjacent 전략)
         # 다른 블록과 인접할수록 높은 점수
@@ -246,10 +246,10 @@ class CandidateGenerator:
         # 블록이 차지하는 공간이 조밀할수록 높은 점수
         density_score = block.get_area() / (block.width * block.height)
 
-        # 가중치를 적용한 종합 점수
+        # 가중치를 적용한 종합 점수 (Y축 우선에 맞게 조정)
         score = (
-            0.4 * x_first_score +      # X축 우선 배치에 높은 가중치
-            0.2 * left_alignment_score +
+            0.4 * y_first_score +      # Y축 우선 배치에 높은 가중치
+            0.2 * top_alignment_score +  # 위쪽 정렬에 가중치
             0.2 * adjacency_score +
             0.1 * area_score +
             0.05 * boundary_score +
