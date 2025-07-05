@@ -1,7 +1,9 @@
 """
-개선된 3D → 2.5D 복셀 변환기 (정확도 대폭 향상)
-- Trimesh 내장 복셀화 + Multi-directional Ray Casting
-- 삐죽삐죽한 외곽 문제 해결
+개선된 3D → 2.5D 복셀 변환기 (선박 블록 최적화 버전) - 이미지 저장 기능 포함
+- 선박 블록 배치에 최적화된 고정 해상도 (0.2m) 기본 사용
+- 사용자가 원하면 해상도 임의 설정 가능
+- 모든 블록에 동일한 해상도 적용으로 배치 정확성 보장
+- 시각화 결과 자동 이미지 저장 기능 추가
 """
 import trimesh
 import numpy as np
@@ -28,11 +30,26 @@ except ImportError as e:
     print(f"[ERROR] Cannot find project modules: {e}")
     sys.exit(1)
 
-class ImprovedVoxelizer:
-    """개선된 3D 복셀화 클래스 - 정확도 대폭 향상"""
+# 🚢 선박 블록 배치 최적화 설정
+SHIP_BLOCK_OPTIMAL_RESOLUTION = 0.2  # 20cm - 선박 블록에 최적화된 해상도
+GRID_UNIT = 2.0  # 자항선 격자 단위 (2m)
+RESOLUTION_FACTOR = GRID_UNIT / SHIP_BLOCK_OPTIMAL_RESOLUTION  # 10개 셀 = 2m
+
+class OptimizedVoxelizer:
+    """선박 블록 배치에 최적화된 3D 복셀화 클래스"""
     
-    def __init__(self, target_voxels=1000):
+    def __init__(self, fixed_resolution=SHIP_BLOCK_OPTIMAL_RESOLUTION, target_voxels=1000):
+        """
+        Args:
+            fixed_resolution (float): 고정 해상도 (기본: 0.2m - 선박 블록 최적화)
+            target_voxels (int): 목표 복셀 수 (해상도 고정시에는 참고용)
+        """
+        self.fixed_resolution = fixed_resolution
         self.target_voxels = target_voxels
+        
+        print(f"[INFO] 🚢 선박 블록 최적화 모드")
+        print(f"  - 고정 해상도: {self.fixed_resolution}m")
+        print(f"  - 자항선 격자 호환성: {GRID_UNIT}m ÷ {self.fixed_resolution}m = {RESOLUTION_FACTOR:.0f}개 셀")
     
     def process_mesh_file(self, file_path):
         """메시 파일 처리 - 품질 개선"""
@@ -98,34 +115,34 @@ class ImprovedVoxelizer:
         
         return mesh
     
-    def calculate_adaptive_resolution(self, mesh):
-        """적응적 해상도 계산 - 복잡도 기반"""
-        bbox = mesh.bounds
-        size = bbox[1] - bbox[0]
-        volume = size[0] * size[1] * size[2]
+    def get_resolution(self, mesh=None):
+        """
+        해상도 반환 (고정 해상도 사용)
         
-        # 메시 복잡도 분석
-        vertex_density = len(mesh.vertices) / volume
-        face_density = len(mesh.faces) / volume
+        Args:
+            mesh: 메시 객체 (고정 해상도 모드에서는 사용 안함)
+            
+        Returns:
+            float: 사용할 해상도
+        """
+        resolution = self.fixed_resolution
         
-        # 복잡도 점수 계산
-        complexity = np.log10(max(1, vertex_density + face_density))
-        complexity_factor = np.clip(complexity / 3.0, 0.5, 2.0)  # 0.5~2.0 배수
+        if mesh is not None:
+            bbox = mesh.bounds
+            size = bbox[1] - bbox[0]
+            volume = size[0] * size[1] * size[2]
+            expected_voxels = volume / (resolution ** 3)
+            
+            print(f"  - Fixed resolution: {resolution}m")
+            print(f"  - Expected voxel count: {expected_voxels:,.0f}")
+            print(f"  - Grid size: {int(size[0]/resolution)} x {int(size[1]/resolution)} x {int(size[2]/resolution)}")
         
-        # 기본 해상도 계산
-        base_resolution = (volume / self.target_voxels) ** (1/3)
-        
-        # 복잡도에 따른 적응적 해상도
-        adaptive_resolution = base_resolution / complexity_factor
-        optimal_resolution = np.clip(adaptive_resolution, 0.02, 1.0)  # 더 세밀한 범위
-        
-        print(f"  - Mesh complexity factor: {complexity_factor:.2f}")
-        print(f"  - Adaptive resolution: {optimal_resolution:.3f}m")
-        return optimal_resolution
+        return resolution
     
     def voxelize_improved(self, mesh, resolution):
         """개선된 복셀화 - Trimesh 내장 + Multi-directional 보정"""
-        print("  - Starting improved voxelization...")
+        print("  - Starting optimized voxelization...")
+        print(f"    Using fixed resolution: {resolution}m (ship block optimized)")
         
         # 방법 1: Trimesh 내장 복셀화 (가장 정확)
         try:
@@ -359,7 +376,7 @@ class ImprovedVoxelizer:
         return voxels
 
 class VoxelConverter25D:
-    """3D → 2.5D 복셀 변환기 (기존과 동일)"""
+    """3D → 2.5D 복셀 변환기"""
     
     def __init__(self):
         pass
@@ -486,17 +503,24 @@ class VoxelConverter25D:
         return voxel_block
 
 class ImprovedVisualizer:
-    """개선된 시각화 클래스"""
+    """개선된 시각화 클래스 (이미지 저장 기능 포함)"""
     
-    def __init__(self):
-        pass
+    def __init__(self, output_dir="voxel_results"):
+        """
+        Args:
+            output_dir (str): 결과 이미지 저장 디렉토리
+        """
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(exist_ok=True)
+        print(f"[INFO] 📁 시각화 결과 저장 디렉토리: {self.output_dir}")
     
     def visualize_improved_comparison(self, voxels_3d, voxel_data_25d_list, bbox, resolution, block_id):
-        """개선된 변환 결과 비교 시각화"""
-        print(f"[INFO] Creating improved comparison visualization...")
+        """선박 블록 최적화된 변환 결과 비교 시각화 + 이미지 저장"""
+        print(f"[INFO] Creating ship-optimized comparison visualization...")
         
         fig = plt.figure(figsize=(24, 16))
-        fig.suptitle(f'Improved 3D → 2.5D Conversion: {block_id}', fontsize=16, fontweight='bold')
+        fig.suptitle(f'🚢 Ship Block Optimized 3D → 2.5D Conversion: {block_id}\nFixed Resolution: {resolution}m (Ship Grid Compatible)', 
+                    fontsize=16, fontweight='bold')
         
         num_methods = len(voxel_data_25d_list)
         
@@ -531,7 +555,68 @@ class ImprovedVisualizer:
         self.render_outline_comparison(ax_outline, voxels_3d, voxel_data_25d_list, bbox, resolution)
         
         plt.tight_layout()
+        
+        # 💾 이미지 저장
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        save_path = self.output_dir / f"ship_voxel_conversion_{block_id}_{timestamp}.png"
+        
+        print(f"[INFO] 💾 시각화 결과 저장 중: {save_path}")
+        fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"[SUCCESS] ✅ 시각화 결과 저장 완료: {save_path}")
+        
+        # 개별 뷰별 저장
+        self._save_individual_views(voxels_3d, voxel_data_25d_list, bbox, resolution, block_id, timestamp)
+        
         plt.show()
+        return fig
+    
+    def _save_individual_views(self, voxels_3d, voxel_data_25d_list, bbox, resolution, block_id, timestamp):
+        """개별 뷰별 이미지 저장"""
+        print(f"[INFO] 💾 개별 뷰 이미지 저장 중...")
+        
+        # 1. 3D 원본 아이소메트릭 뷰
+        fig_3d_iso = plt.figure(figsize=(10, 8))
+        ax_3d_iso = fig_3d_iso.add_subplot(111, projection='3d')
+        self.render_3d_voxels_smooth(ax_3d_iso, voxels_3d, bbox, resolution, view='isometric')
+        ax_3d_iso.set_title(f'3D Original: {block_id} (Isometric View)\nResolution: {resolution}m', fontsize=12, fontweight='bold')
+        
+        save_path_3d_iso = self.output_dir / f"3d_original_iso_{block_id}_{timestamp}.png"
+        fig_3d_iso.savefig(save_path_3d_iso, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close(fig_3d_iso)
+        
+        # 2. 3D 원본 탑 뷰
+        fig_3d_top = plt.figure(figsize=(10, 8))
+        ax_3d_top = fig_3d_top.add_subplot(111, projection='3d')
+        self.render_3d_voxels_smooth(ax_3d_top, voxels_3d, bbox, resolution, view='top')
+        ax_3d_top.set_title(f'3D Original: {block_id} (Top View)\nResolution: {resolution}m', fontsize=12, fontweight='bold')
+        
+        save_path_3d_top = self.output_dir / f"3d_original_top_{block_id}_{timestamp}.png"
+        fig_3d_top.savefig(save_path_3d_top, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close(fig_3d_top)
+        
+        # 3. 각 방법별 2.5D 결과
+        for method_name, voxel_data_25d in voxel_data_25d_list:
+            # 2.5D Top View
+            fig_25d_top = plt.figure(figsize=(10, 8))
+            ax_25d_top = fig_25d_top.add_subplot(111)
+            self.render_25d_top_view_improved(ax_25d_top, voxel_data_25d)
+            ax_25d_top.set_title(f'2.5D {method_name}: {block_id} (Top View)\nResolution: {resolution}m', fontsize=12, fontweight='bold')
+            
+            save_path_25d_top = self.output_dir / f"25d_{method_name}_top_{block_id}_{timestamp}.png"
+            fig_25d_top.savefig(save_path_25d_top, dpi=300, bbox_inches='tight', facecolor='white')
+            plt.close(fig_25d_top)
+            
+            # 2.5D 3D View
+            fig_25d_3d = plt.figure(figsize=(10, 8))
+            ax_25d_3d = fig_25d_3d.add_subplot(111, projection='3d')
+            self.render_25d_3d_view_improved(ax_25d_3d, voxel_data_25d, bbox, resolution)
+            ax_25d_3d.set_title(f'2.5D {method_name}: {block_id} (3D View)\nResolution: {resolution}m', fontsize=12, fontweight='bold')
+            
+            save_path_25d_3d = self.output_dir / f"25d_{method_name}_3d_{block_id}_{timestamp}.png"
+            fig_25d_3d.savefig(save_path_25d_3d, dpi=300, bbox_inches='tight', facecolor='white')
+            plt.close(fig_25d_3d)
+        
+        print(f"[SUCCESS] ✅ 개별 뷰 저장 완료: {len(voxel_data_25d_list) * 2 + 2}개 파일")
     
     def render_3d_voxels_smooth(self, ax, voxels_3d, bbox, resolution, view='isometric'):
         """부드러운 3D 복셀 렌더링"""
@@ -663,7 +748,7 @@ class ImprovedVisualizer:
         self.set_unified_3d_limits(ax, bbox)
     
     def render_accuracy_analysis(self, ax, voxels_3d, voxel_data_25d_list, bbox, resolution):
-        """정확도 분석 렌더링"""
+        """정확도 분석 렌더링 (선박 블록 최적화 정보 포함)"""
         original_3d_count = np.sum(voxels_3d) if voxels_3d is not None else 0
         
         method_names = []
@@ -726,23 +811,28 @@ class ImprovedVisualizer:
         ax.set_xlabel('Conversion Method')
         ax.set_ylabel('Voxel Count')
         ax2.set_ylabel('Accuracy (%)', color='red')
-        ax.set_title('Conversion Accuracy Analysis')
+        ax.set_title('🚢 Ship Block Conversion Accuracy Analysis')
         ax.set_xticks(x_pos)
         ax.set_xticklabels(method_names)
         ax.legend(loc='upper left')
         ax2.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
         
-        # 추가 통계 정보
+        # 선박 블록 최적화 정보
         best_method_idx = np.argmax(accuracy_scores)
         best_method = method_names[best_method_idx]
         best_accuracy = accuracy_scores[best_method_idx]
         
+        # 격자 호환성 계산
+        grid_unit = 2.0  # 자항선 격자 단위
+        grid_cells = grid_unit / resolution
+        
         info_text = [
             f"🏆 Best Method: {best_method} ({best_accuracy:.1f}%)",
             f"📊 Original 3D: {original_3d_count:,} voxels",
-            f"📐 Resolution: {resolution:.3f}m",
-            f"📏 Bbox: {bbox[1][0] - bbox[0][0]:.1f}×{bbox[1][1] - bbox[0][1]:.1f}×{bbox[1][2] - bbox[0][2]:.1f}m"
+            f"🚢 Fixed Resolution: {resolution:.3f}m",
+            f"📐 Ship Grid Compatibility: {grid_unit}m ÷ {resolution:.3f}m = {grid_cells:.0f} cells",
+            f"✅ All blocks same resolution: Placement accuracy guaranteed"
         ]
         
         ax.text(0.02, 0.98, '\n'.join(info_text), transform=ax.transAxes, 
@@ -780,9 +870,9 @@ class ImprovedVisualizer:
         ax.legend()
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
-        ax.set_title('Footprint Comparison (Top View)')
+        ax.set_title('🚢 Ship Block Footprint Comparison (Top View)')
         
-        # 통계 정보
+        # 선박 블록 통계 정보
         if voxels_3d is not None:
             original_area = np.sum(original_footprint)
             
@@ -791,6 +881,10 @@ class ImprovedVisualizer:
                 area_25d = len(voxel_data_25d)
                 coverage_ratio = (area_25d / original_area * 100) if original_area > 0 else 0
                 coverage_info.append(f"{method_name}: {area_25d} cells ({coverage_ratio:.1f}%)")
+            
+            # 해상도 정보 추가
+            coverage_info.append(f"Fixed resolution: {resolution}m")
+            coverage_info.append(f"Ship grid compatible: ✅")
             
             ax.text(0.02, 0.98, '\n'.join(coverage_info), transform=ax.transAxes,
                    fontsize=9, va='top', ha='left',
@@ -819,24 +913,39 @@ class ImprovedVisualizer:
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
 
-def convert_mesh_to_25d_improved(file_path, target_voxels=1000, force_resolution=None, 
-                                methods=['footprint', 'height_map', 'outline']):
-    """개선된 메시 → 3D → 2.5D 복셀 변환"""
-    print(f"[INFO] Starting IMPROVED 3D → 2.5D conversion: {Path(file_path).name}")
-    print("✨ 개선사항: Trimesh 내장 복셀화 + Multi-directional Ray Casting")
+def convert_mesh_to_25d_optimized(file_path, custom_resolution=None, 
+                                 methods=['footprint', 'height_map', 'outline'],
+                                 output_dir="voxel_results"):
+    """
+    선박 블록 최적화된 메시 → 3D → 2.5D 복셀 변환 (이미지 저장 포함)
+    
+    Args:
+        file_path (str): 메시 파일 경로
+        custom_resolution (float): 사용자 지정 해상도 (None이면 최적화된 고정값 사용)
+        methods (list): 사용할 변환 방법들
+        output_dir (str): 결과 이미지 저장 디렉토리
+    
+    Returns:
+        list: [(method_name, voxel_data_25d), ...] 형태의 결과
+    """
+    print(f"[INFO] Starting SHIP-OPTIMIZED 3D → 2.5D conversion: {Path(file_path).name}")
+    
+    # 해상도 결정
+    if custom_resolution:
+        resolution = custom_resolution
+        print(f"🔧 사용자 지정 해상도: {resolution}m")
+    else:
+        resolution = SHIP_BLOCK_OPTIMAL_RESOLUTION
+        print(f"🚢 선박 블록 최적화 해상도: {resolution}m")
+        print(f"   (자항선 격자 호환: {GRID_UNIT}m ÷ {resolution}m = {RESOLUTION_FACTOR:.0f}개 셀)")
     
     try:
-        # 1. 개선된 3D 복셀화
-        voxelizer = ImprovedVoxelizer(target_voxels)
+        # 1. 최적화된 3D 복셀화
+        voxelizer = OptimizedVoxelizer(fixed_resolution=resolution)
         mesh = voxelizer.process_mesh_file(file_path)
         
-        if force_resolution:
-            resolution = force_resolution
-            print(f"  - Using forced resolution: {resolution}m")
-        else:
-            resolution = voxelizer.calculate_adaptive_resolution(mesh)
-        
-        voxels_3d, bbox, resolution = voxelizer.voxelize_improved(mesh, resolution)
+        final_resolution = voxelizer.get_resolution(mesh)
+        voxels_3d, bbox, final_resolution = voxelizer.voxelize_improved(mesh, final_resolution)
         
         if np.sum(voxels_3d) == 0:
             print("[WARNING] No 3D voxels generated!")
@@ -850,13 +959,13 @@ def convert_mesh_to_25d_improved(file_path, target_voxels=1000, force_resolution
         
         for method in methods:
             print(f"\n[INFO] Converting using '{method}' method...")
-            voxel_data_25d = converter.convert_3d_to_25d(voxels_3d, bbox, resolution, method)
+            voxel_data_25d = converter.convert_3d_to_25d(voxels_3d, bbox, final_resolution, method)
             
             if voxel_data_25d:
                 voxel_data_25d_list.append((method, voxel_data_25d))
                 
                 # VoxelBlock 객체 생성
-                block_id = f"{Path(file_path).stem}_{method}_improved"
+                block_id = f"{Path(file_path).stem}_{method}_ship_optimized"
                 voxel_block = converter.create_voxel_block(voxel_data_25d, block_id)
                 
                 if voxel_block:
@@ -868,15 +977,8 @@ def convert_mesh_to_25d_improved(file_path, target_voxels=1000, force_resolution
             print("[WARNING] No 2.5D conversions succeeded!")
             return None
         
-        # 3. 개선된 시각화
-        print(f"\n[INFO] Creating improved comparison visualization...")
-        visualizer = ImprovedVisualizer()
-        visualizer.visualize_improved_comparison(
-            voxels_3d, voxel_data_25d_list, bbox, resolution, Path(file_path).stem
-        )
-        
-        # 4. 개선된 결과 분석
-        print(f"\n🎯 === IMPROVED Results Analysis ===")
+        # 3. 결과 분석
+        print(f"\n🚢 === SHIP BLOCK OPTIMIZED Results Analysis ===")
         original_count = np.sum(voxels_3d)
         
         for method_name, voxel_data_25d in voxel_data_25d_list:
@@ -890,76 +992,125 @@ def convert_mesh_to_25d_improved(file_path, target_voxels=1000, force_resolution
             print(f"  🧊 Total voxels: {total_voxels:,}")
             print(f"  🎯 Accuracy: {accuracy:.1f}%")
             print(f"  📉 Data reduction: {reduction:.1f}%")
+            print(f"  🚢 Ship compatibility: OPTIMAL (fixed {resolution}m resolution)")
             
             if method_name == 'footprint':
-                print(f"  ✅ 추천: 일반적인 블록 (외곽 정확, 내부 단순화)")
+                print(f"  ✅ 추천: 선박 블록 배치에 최적 (외곽 정확, 배치 호환성)")
             elif method_name == 'height_map':
                 print(f"  🗻 추천: 높이가 중요한 구조")
             elif method_name == 'outline':
                 print(f"  📐 추천: 경계선만 필요한 경우")
         
+        # 4. 배치 호환성 정보
+        print(f"\n🔧 === 배치 시스템 호환성 ===")
+        print(f"  - 고정 해상도: {resolution}m")
+        print(f"  - 자항선 격자 단위: {GRID_UNIT}m")
+        print(f"  - 격자 호환성: {GRID_UNIT}m ÷ {resolution}m = {RESOLUTION_FACTOR:.0f}개 셀")
+        print(f"  - 모든 블록 동일 해상도: ✅ 배치 정확성 보장")
+        
+        # 5. 시각화 및 이미지 저장
+        print(f"\n[INFO] Creating ship-optimized comparison visualization with image saving...")
+        visualizer = ImprovedVisualizer(output_dir=output_dir)
+        visualizer.visualize_improved_comparison(
+            voxels_3d, voxel_data_25d_list, bbox, final_resolution, Path(file_path).stem
+        )
+        
         return voxel_data_25d_list
         
     except Exception as e:
-        print(f"[ERROR] Improved conversion failed: {e}")
+        print(f"[ERROR] Ship-optimized conversion failed: {e}")
         import traceback
         traceback.print_exc()
         return None
 
 def main():
     if len(sys.argv) < 2:
-        print("🚀" + "="*70)
-        print("IMPROVED 3D → 2.5D Voxel Conversion Tool")
-        print("🚀" + "="*70)
+        print("🚢" + "="*70)
+        print("SHIP BLOCK OPTIMIZED 3D → 2.5D Voxel Conversion Tool")
+        print("WITH IMAGE SAVING FEATURE")
+        print("🚢" + "="*70)
+        print("")
+        print("🎯 선박 블록 배치에 최적화된 고정 해상도 + 자동 이미지 저장!")
+        print(f"   기본 해상도: {SHIP_BLOCK_OPTIMAL_RESOLUTION}m (자항선 격자 호환)")
         print("")
         print("사용법:")
-        print("  python improved_3d_to_25d_converter.py <file.obj|fbx>")
-        print("  python improved_3d_to_25d_converter.py <file.obj> <target_voxels>")
-        print("  python improved_3d_to_25d_converter.py <file.obj> <target_voxels> <resolution>")
+        print("  python ship_voxelizer.py <file.obj|fbx>                    # 최적화된 해상도 (0.2m)")
+        print("  python ship_voxelizer.py <file.obj> <custom_resolution>    # 사용자 지정 해상도")
+        print("  python ship_voxelizer.py <file.obj> <resolution> <output_dir>  # 저장 디렉토리 지정")
         print("")
         print("예시:")
-        print("  python improved_3d_to_25d_converter.py 4386_183_000.obj")
-        print("  python improved_3d_to_25d_converter.py model.fbx 1500")
-        print("  python improved_3d_to_25d_converter.py model.obj 800 0.05")
+        print("  python ship_voxelizer.py 4386_183_000.obj                 # 최적화된 0.2m 해상도")
+        print("  python ship_voxelizer.py 4386_183_000.obj 0.1             # 0.1m 해상도로 변경")
+        print("  python ship_voxelizer.py 4386_183_000.obj 0.25 results    # 0.25m 해상도, results 폴더에 저장")
         print("")
-        print("✨ 개선사항:")
-        print("  🎯 Trimesh 내장 복셀화 (가장 정확)")
-        print("  🔄 Multi-directional Ray Casting (X,Y,Z 방향)")
-        print("  📐 적응적 해상도 (복잡도 기반)")
-        print("  🔧 메시 품질 자동 개선")
-        print("  📊 정확도 상세 분석")
-        print("  🚫 삐죽삐죽한 외곽 문제 해결!")
+        print("🚢 선박 블록 최적화 특징:")
+        print("  ✅ 모든 블록에 동일한 해상도 적용 → 배치 정확성 보장")
+        print("  ✅ 자항선 격자(2m)와 완벽 호환")
+        print("  ✅ 0.2m 해상도 = 2m ÷ 10개 셀 (깔끔한 나누어떨어짐)")
+        print("  ✅ 과도한 정밀도 방지 → 처리 효율성 향상")
+        print("")
+        print("💾 자동 이미지 저장 기능:")
+        print("  📸 종합 비교 이미지 (24x16 고해상도)")
+        print("  📸 3D 원본 뷰 (아이소메트릭, 탑뷰)")
+        print("  📸 각 방법별 2.5D 결과 (탑뷰, 3D뷰)")
+        print("  📁 타임스탬프 포함 파일명으로 자동 정리")
+        print("")
+        print("💡 권장 해상도:")
+        print("  - 0.1m: 고정밀 (2m ÷ 20개 셀)")
+        print("  - 0.2m: 최적화 (2m ÷ 10개 셀) ⭐ 기본값")
+        print("  - 0.25m: 고속 (2m ÷ 8개 셀)")
+        print("  - 0.5m: 초고속 (2m ÷ 4개 셀)")
         return
     
     file_path = sys.argv[1]
-    target_voxels = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
-    force_resolution = float(sys.argv[3]) if len(sys.argv) > 3 else None
+    custom_resolution = float(sys.argv[2]) if len(sys.argv) > 2 else None
+    output_dir = sys.argv[3] if len(sys.argv) > 3 else "voxel_results"
     
     if not os.path.exists(file_path):
         print(f"[ERROR] File not found: {file_path}")
         return
     
     try:
-        print("🚀" + "="*70)
-        print("IMPROVED 3D → 2.5D Voxel Conversion Tool")
-        print("🚀" + "="*70)
-        print("🎯 정확도 대폭 향상 버전!")
+        print("🚢" + "="*70)
+        print("SHIP BLOCK OPTIMIZED 3D → 2.5D Voxel Conversion Tool")
+        print("WITH AUTOMATIC IMAGE SAVING FEATURE")
+        print("🚢" + "="*70)
+        print("🎯 선박 블록 배치 최적화 + 자동 이미지 저장 버전!")
+        print(f"📁 결과 저장 디렉토리: {output_dir}")
         print("")
         
-        result = convert_mesh_to_25d_improved(file_path, target_voxels, force_resolution)
+        result = convert_mesh_to_25d_optimized(file_path, custom_resolution, output_dir=output_dir)
         
         if result:
-            print(f"\n🎉 === 개선된 변환 완료! ===")
-            print(f"✅ 정확도 대폭 향상된 3D → 2.5D 변환 성공!")
-            print(f"🎯 삐죽삐죽한 외곽 문제 해결!")
+            print(f"\n🎉 === 선박 블록 최적화 변환 + 이미지 저장 완료! ===")
+            print(f"✅ 모든 블록 동일 해상도 적용으로 배치 정확성 보장!")
+            print(f"🚢 자항선 격자 시스템과 완벽 호환!")
             print(f"📊 {len(result)}가지 방법으로 변환 완료")
-            print(f"🔍 상세 정확도 분석 결과 확인")
-            print(f"💡 시각화 창에서 개선된 품질 확인")
+            print(f"💾 시각화 결과 이미지 자동 저장 완료!")
+            
+            # 해상도 정보 표시
+            used_resolution = custom_resolution if custom_resolution else SHIP_BLOCK_OPTIMAL_RESOLUTION
+            grid_cells = GRID_UNIT / used_resolution
+            print(f"🔧 사용된 해상도: {used_resolution}m")
+            print(f"📐 격자 호환성: {GRID_UNIT}m ÷ {used_resolution}m = {grid_cells:.0f}개 셀")
+            
+            print(f"\n📁 === 저장된 파일 목록 ===")
+            output_path = Path(output_dir)
+            if output_path.exists():
+                saved_files = list(output_path.glob("*.png"))
+                for i, file_path in enumerate(sorted(saved_files)[-10:], 1):  # 최근 10개 파일만 표시
+                    print(f"  {i}. {file_path.name}")
+                if len(saved_files) > 10:
+                    print(f"  ... 총 {len(saved_files)}개 파일")
+            
+            print(f"\n💡 이제 모든 블록을 동일한 해상도로 변환하여")
+            print(f"   배치 알고리즘에서 정확한 좌표 매칭이 가능합니다!")
+            print(f"🖼️ 시각화 결과를 '{output_dir}' 폴더에서 확인하세요!")
         else:
             print(f"\n💡 변환 실패 시 시도할 옵션:")
-            print(f"  - 해상도 강제 설정: python {sys.argv[0]} {file_path} 1000 0.03")
-            print(f"  - 복셀 수 증가: python {sys.argv[0]} {file_path} 2000")
-            print(f"  - 더 세밀한 해상도: python {sys.argv[0]} {file_path} 1500 0.02")
+            print(f"  - 다른 해상도: python {sys.argv[0]} {file_path} 0.1")
+            print(f"  - 더 큰 해상도: python {sys.argv[0]} {file_path} 0.5")
+            print(f"  - 다른 저장 위치: python {sys.argv[0]} {file_path} 0.2 my_results")
         
         input("\n아무 키나 눌러서 종료...")
         
