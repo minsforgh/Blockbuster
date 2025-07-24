@@ -1,107 +1,82 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-자항선 블록 배치 시스템 (수정된 원본 알고리즘 사용)
-ship_placer_original_y_first.py - 기존 프로젝트 알고리즘을 Y축 우선으로 수정하여 사용
+자항선 블록 배치 시스템 (원본 알고리즘 완전 호환)
+- 사용자 지정 자항선 크기 (m 단위 입력)
+- 유연한 그리드 해상도 설정
+- 블록간 간격, 선수/선미 여유 공간 설정
+- 크레인/트레슬 블록 분류
+- CSV 및 JSON 파일 지원
+- 원본 BacktrackingPlacer 완전 호환
 """
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+
+import json
 import sys
 import os
-import json
 import time
-import copy
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from pathlib import Path
 from collections import defaultdict
 import warnings
 
-# 한글 폰트 설정
-def setup_korean_font():
-    """한글 폰트 자동 설정"""
-    try:
-        import platform
-        import matplotlib.font_manager as fm
-        
-        system = platform.system()
-        
-        if system == "Windows":
-            korean_fonts = ["Malgun Gothic", "맑은 고딕", "Gulim", "굴림"]
-        elif system == "Darwin":  # macOS
-            korean_fonts = ["AppleGothic", "Apple SD Gothic Neo", "Nanum Gothic"]
-        else:  # Linux
-            korean_fonts = ["Nanum Gothic", "나눔고딕", "UnDotum"]
-        
-        available_fonts = [f.name for f in fm.fontManager.ttflist]
-        
-        for font in korean_fonts:
-            if font in available_fonts:
-                plt.rcParams['font.family'] = font
-                plt.rcParams['axes.unicode_minus'] = False
-                print(f"[INFO] Korean font set: {font}")
-                return True
-        
-        print(f"[WARNING] No Korean font found, using fallback text")
-        return False
-        
-    except Exception:
-        print(f"[WARNING] Font setup failed, using fallback text")
-        return False
+warnings.filterwarnings('ignore')
 
-# 폰트 경고 억제
-warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
-warnings.filterwarnings('ignore', message='.*missing from font.*')
-warnings.filterwarnings('ignore', message='.*Glyph.*missing.*')
+# 영어 폰트 설정 (한글 깨짐 방지)
+plt.rcParams['font.family'] = ['DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
 
-# 한글 폰트 설정 시도
-KOREAN_FONT_AVAILABLE = setup_korean_font()
-
-# 프로젝트 모듈 import (수정된 원본 알고리즘 사용)
+# 프로젝트 모듈 import 시도
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 try:
     from models.voxel_block import VoxelBlock
     from models.placement_area import PlacementArea
-    # 수정된 원본 알고리즘 import
     from algorithms.backtracking_placer import BacktrackingPlacer
-    from algorithms.candidate_generator import CandidateGenerator
-    print(f"[INFO] Modified original project modules loaded successfully")
     ORIGINAL_ALGORITHM_AVAILABLE = True
+    print(f"[INFO] Original algorithm modules loaded successfully")
 except ImportError as e:
-    print(f"[ERROR] Cannot find project modules: {e}")
-    print(f"[INFO] Falling back to basic placement algorithm")
+    print(f"[INFO] Original algorithm modules not found")
     ORIGINAL_ALGORITHM_AVAILABLE = False
 
 class ShipPlacementArea(PlacementArea):
-    """자항선 특화 배치 영역 클래스 (원본 PlacementArea 확장)"""
+    """원본 PlacementArea를 상속받은 자항선 특화 배치 영역"""
     
-    def __init__(self, width=42, height=18, grid_resolution=2.0):
+    def __init__(self, ship_width_m, ship_height_m, grid_resolution=1.0):
         """
         Args:
-            width (int): 자항선 너비 그리드 수 (84m / 2m = 42)
-            height (int): 자항선 높이 그리드 수 (36m / 2m = 18)
+            ship_width_m (float): 자항선 너비 (m)
+            ship_height_m (float): 자항선 높이 (m) 
             grid_resolution (float): 그리드 해상도 (m)
         """
-        super().__init__(width, height)
+        # 그리드 크기 계산 (m를 그리드로 변환)
+        width_grids = int(ship_width_m / grid_resolution)
+        height_grids = int(ship_height_m / grid_resolution)
+        
+        super().__init__(width_grids, height_grids)
+        
         self.grid_resolution = grid_resolution
-        self.actual_width = width * grid_resolution  # 84m
-        self.actual_height = height * grid_resolution  # 36m
+        self.ship_width_m = ship_width_m
+        self.ship_height_m = ship_height_m
         
-        # 자항선 제약조건 (그리드 단위)
-        self.bow_clearance = int(5.0 / grid_resolution)  # 선수 5m
-        self.block_spacing = max(1, int(1.0 / grid_resolution))  # 블록 간격 1m
+        # 자항선 제약조건 (그리드 단위로 변환)
+        self.bow_clearance = int(5.0 / grid_resolution)      # 선수 5m
+        self.stern_clearance = int(0.0 / grid_resolution)    # 선미 0m  
+        self.block_spacing = int(2.0 / grid_resolution)      # 블록간 2m
         
-        print(f"🚢 Ship Placement Area initialized (Original Algorithm Y-first):")
-        print(f"   📏 Size: {self.actual_width}m × {self.actual_height}m ({width} × {height} grids)")
-        print(f"   🎯 Grid resolution: {grid_resolution}m")
-        print(f"   ⛵ Bow clearance: {self.bow_clearance} grids ({self.bow_clearance * grid_resolution}m)")
-        print(f"   📐 Block spacing: {self.block_spacing} grids ({self.block_spacing * grid_resolution}m)")
-        print(f"   🔄 Fill order: Y-axis first (modified original algorithm)")
+        print(f"Ship Placement Area Initialized:")
+        print(f"   Ship size: {ship_width_m}m × {ship_height_m}m")
+        print(f"   Grid size: {width_grids} × {height_grids} grids")
+        print(f"   Grid resolution: {grid_resolution}m/grid")
+        print(f"   Bow clearance: {self.bow_clearance} grids ({self.bow_clearance * grid_resolution}m)")
+        print(f"   Stern clearance: {self.stern_clearance} grids ({self.stern_clearance * grid_resolution}m)")
+        print(f"   Block spacing: {self.block_spacing} grids ({self.block_spacing * grid_resolution}m)")
     
     def can_place_block(self, block, pos_x, pos_y):
-        """
-        자항선 제약조건을 고려한 블록 배치 가능 여부 확인
-        원본 can_place_block을 오버라이드하여 자항선 제약조건 추가
-        """
+        """자항선 제약조건을 고려한 블록 배치 가능 여부 확인"""
         # 1. 기본 배치 가능성 확인 (원본 알고리즘)
         if not super().can_place_block(block, pos_x, pos_y):
             return False
@@ -111,7 +86,12 @@ class ShipPlacementArea(PlacementArea):
         if block_right_edge > self.width - self.bow_clearance:
             return False
         
-        # 3. 다른 블록과의 간격 확인
+        # 3. 선미(왼쪽) 여백 확인
+        block_left_edge = pos_x
+        if block_left_edge < self.stern_clearance:
+            return False
+        
+        # 4. 다른 블록과의 간격 확인
         footprint = block.get_footprint()
         
         for vx, vy in footprint:
@@ -135,30 +115,108 @@ class ShipPlacementArea(PlacementArea):
         
         return True
 
+class SimpleBlock:
+    """간단한 블록 클래스 (원본 VoxelBlock 인터페이스 호환)"""
+    
+    def __init__(self, block_id, width, height, block_type="unknown"):
+        self.id = block_id
+        self.block_id = block_id
+        self.width = width
+        self.height = height
+        self.block_type = block_type
+        self.rotation = 0
+        self.position = None
+        
+        # VoxelBlock 호환을 위한 속성들
+        self.min_x = 0
+        self.min_y = 0
+        self.max_x = width - 1
+        self.max_y = height - 1
+    
+    def get_footprint(self):
+        """블록의 발자국 반환 (VoxelBlock 호환)"""
+        footprint = []
+        for x in range(self.width):
+            for y in range(self.height):
+                footprint.append((x, y))
+        return footprint
+    
+    def get_area(self):
+        """블록 면적 반환"""
+        return self.width * self.height
+    
+    def rotate(self):
+        """블록 회전 (90도)"""
+        self.width, self.height = self.height, self.width
+        self.rotation = (self.rotation + 90) % 360
+        self.max_x = self.width - 1
+        self.max_y = self.height - 1
+
 class ShipPlacer:
-    """자항선 블록 배치 클래스 (수정된 원본 알고리즘 사용)"""
+    """자항선 배치 시스템"""
     
-    def __init__(self, ship_width=84, ship_height=36, grid_resolution=2.0):
-        self.ship_width = ship_width
-        self.ship_height = ship_height
+    def __init__(self, ship_width_m=84, ship_height_m=36, grid_resolution=1.0):
+        self.ship_width_m = ship_width_m
+        self.ship_height_m = ship_height_m
         self.grid_resolution = grid_resolution
-        self.grid_width = int(ship_width / grid_resolution)
-        self.grid_height = int(ship_height / grid_resolution)
         
-        print(f"🚢 Ship Placer initialized (Modified Original Algorithm):")
-        print(f"   📏 Ship size: {ship_width}m × {ship_height}m")
-        print(f"   📐 Grid size: {self.grid_width} × {self.grid_height}")
-        print(f"   🎯 Resolution: {grid_resolution}m per grid")
-        print(f"   🔄 Fill order: Y-axis first (modified from original)")
-        
-        if ORIGINAL_ALGORITHM_AVAILABLE:
-            print(f"   🧠 Algorithm: Modified Original (Y-first Heuristic Backtracking)")
-        else:
-            print(f"   🧠 Algorithm: Fallback (Simple Greedy)")
+        print(f"Ship Placement System Initialized")
+        print(f"   Ship: {ship_width_m}m × {ship_height_m}m")
+        print(f"   Resolution: {grid_resolution}m/grid")
+        print(f"   Grid count: {int(ship_width_m/grid_resolution)} × {int(ship_height_m/grid_resolution)}")
     
-    def load_blocks(self, json_path, max_blocks=None):
-        """JSON에서 블록 로드"""
-        print(f"\n📁 Loading blocks from: {json_path}")
+    def load_blocks_from_csv(self, csv_path, max_blocks=None):
+        """CSV 파일에서 블록 로드"""
+        print(f"Loading blocks from CSV: {csv_path}")
+        
+        # CSV 읽기
+        df = pd.read_csv(csv_path, encoding='utf-8-sig')
+        print(f"   Found {len(df)} blocks in CSV")
+        
+        if max_blocks:
+            df = df.head(max_blocks)
+            print(f"   Using first {max_blocks} blocks only")
+        
+        blocks = []
+        for _, row in df.iterrows():
+            if ORIGINAL_ALGORITHM_AVAILABLE:
+                # VoxelBlock 생성 (원본 알고리즘용)
+                width = int(row['grid_width'])
+                height = int(row['grid_height'])
+                
+                voxel_data = []
+                for x in range(width):
+                    for y in range(height):
+                        voxel_data.append((x, y, [0, 1, 0]))
+                
+                block = VoxelBlock(row['block_id'], voxel_data)
+                block.block_type = row.get('block_type', 'unknown')
+            else:
+                # SimpleBlock 생성 (간단 알고리즘용)
+                block = SimpleBlock(
+                    block_id=row['block_id'],
+                    width=int(row['grid_width']),
+                    height=int(row['grid_height']),
+                    block_type=row.get('block_type', 'unknown')
+                )
+            
+            blocks.append(block)
+        
+        # 통계 출력
+        type_counts = defaultdict(int)
+        for block in blocks:
+            type_counts[block.block_type] += 1
+        
+        print(f"   Successfully loaded {len(blocks)} blocks")
+        print(f"   Block types:")
+        for block_type, count in type_counts.items():
+            print(f"      {block_type}: {count}")
+        
+        return blocks
+    
+    def load_blocks_from_json(self, json_path, max_blocks=None):
+        """JSON 파일에서 블록 로드"""
+        print(f"Loading blocks from JSON: {json_path}")
         
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -166,313 +224,277 @@ class ShipPlacer:
         blocks_data = data.get('blocks', [])
         if max_blocks:
             blocks_data = blocks_data[:max_blocks]
-            print(f"🔢 Using first {max_blocks} blocks for testing")
+            print(f"Using first {max_blocks} blocks only")
         
-        print(f"   📦 Found {len(blocks_data)} blocks to process")
+        print(f"   Found {len(blocks_data)} blocks in JSON")
         
         blocks = []
         for block_info in blocks_data:
-            block_id = block_info['block_id']
-            grid_width = block_info['grid_size_2d']['width']
-            grid_height = block_info['grid_size_2d']['height']
+            if ORIGINAL_ALGORITHM_AVAILABLE:
+                # VoxelBlock 사용
+                voxel_data = []
+                width = block_info['grid_size_2d']['width']
+                height = block_info['grid_size_2d']['height']
+                
+                for x in range(width):
+                    for y in range(height):
+                        voxel_data.append((x, y, [0, 1, 0]))
+                
+                block = VoxelBlock(block_info['block_id'], voxel_data)
+                block.block_type = block_info.get('block_type', 'unknown')
+            else:
+                # SimpleBlock 사용
+                block = SimpleBlock(
+                    block_id=block_info['block_id'],
+                    width=block_info['grid_size_2d']['width'],
+                    height=block_info['grid_size_2d']['height'],
+                    block_type=block_info.get('block_type', 'unknown')
+                )
             
-            # 2D 직사각형 복셀 데이터 생성
-            voxel_data = []
-            for x in range(grid_width):
-                for y in range(grid_height):
-                    voxel_data.append((x, y, [0, 1, 0]))
-            
-            # VoxelBlock 생성
-            block = VoxelBlock(block_id, voxel_data)
-            block.block_type = block_info.get('block_type', 'unknown')
-            block.original_info = block_info
             blocks.append(block)
         
-        # 블록 유형별 통계
+        # 통계 출력
         type_counts = defaultdict(int)
         for block in blocks:
             type_counts[block.block_type] += 1
         
-        print(f"   ✅ Successfully loaded {len(blocks)} blocks")
-        print(f"   📊 Block types:")
+        print(f"   Successfully loaded {len(blocks)} blocks")
+        print(f"   Block types:")
         for block_type, count in type_counts.items():
             print(f"      {block_type}: {count}")
         
         return blocks
     
     def place_blocks(self, blocks, max_time=60):
-        """블록 배치 실행 (수정된 원본 알고리즘 사용)"""
-        print(f"\n🚀 Starting ship block placement with modified original algorithm...")
-        print(f"   📦 Blocks to place: {len(blocks)}")
-        print("="*70)
+        """블록 배치 실행"""
+        if not ORIGINAL_ALGORITHM_AVAILABLE:
+            print("❌ Original algorithm modules not available")
+            print("   Required modules: models.voxel_block, models.placement_area, algorithms.backtracking_placer")
+            return None
+            
+        print(f"Block placement started...")
+        print(f"   Blocks to place: {len(blocks)}")
+        print(f"   Max time: {max_time} seconds")
+        print("="*80)
         
         # 자항선 특화 배치 영역 생성
-        ship_area = ShipPlacementArea(
-            width=self.grid_width,
-            height=self.grid_height,
+        area = ShipPlacementArea(
+            ship_width_m=self.ship_width_m,
+            ship_height_m=self.ship_height_m,
             grid_resolution=self.grid_resolution
         )
         
-        if ORIGINAL_ALGORITHM_AVAILABLE:
-            # 수정된 원본 백트래킹 알고리즘 사용
-            print(f"🧠 Using MODIFIED ORIGINAL algorithm (Y-first Heuristic Backtracking)")
-            print(f"   📋 Original algorithm features:")
-            print(f"      - Heuristic Backtracking")
-            print(f"      - Bin Packing strategies (Top-Left, Adjacent, Boundary)")
-            print(f"      - 6 heuristic criteria scoring")
-            print(f"   🔧 Modifications:")
-            print(f"      - X-axis priority → Y-axis priority")
-            print(f"      - Width-based sorting → Height-based sorting")
-            print(f"      - Left alignment → Top alignment")
-            print(f"      - Ship constraints integration")
-            
-            placer = BacktrackingPlacer(ship_area, blocks, max_time)
+        print(f"Using original algorithm (heuristic backtracking)")
+        try:
+            placer = BacktrackingPlacer(area, blocks, max_time)
             result = placer.optimize()
-            
             return result
             
-        else:
-            # 폴백: 간단한 그리디 알고리즘
-            print(f"🧠 Using fallback algorithm (Simple Greedy)")
-            print(f"   ℹ️ Reason: Original algorithm modules not available")
-            
-            return self._fallback_greedy_placement(ship_area, blocks)
+        except Exception as e:
+            print(f"❌ Original algorithm failed: {e}")
+            return None
     
-    def _fallback_greedy_placement(self, ship_area, blocks):
-        """폴백 그리디 배치 알고리즘"""
-        ship_area.add_blocks(blocks)
+    def visualize(self, result, save_path=None, show=True):
+        """배치 결과 시각화"""
+        print(f"Generating placement result visualization...")
         
-        # 블록 정렬 (Y축 우선에 맞게 높이 우선)
-        sorted_blocks = sorted(blocks, key=lambda b: (-b.height, -b.get_area()))
+        # 영어 폰트 재설정
+        plt.rcParams['font.family'] = ['DejaVu Sans']
         
-        placed_count = 0
-        start_time = time.time()
+        fig, ax = plt.subplots(1, 1, figsize=(20, 12))
         
-        for i, block in enumerate(sorted_blocks, 1):
-            print(f"   📦 [{i:3d}/{len(sorted_blocks)}] Placing {block.id[:15]:15}")
-            
-            placed = False
-            
-            # Y축 우선으로 가능한 모든 위치에서 배치 시도 (X축 먼저, Y축 나중)
-            for x in range(ship_area.width - block.width):
-                for y in range(ship_area.height - block.height):
-                    
-                    if ship_area.can_place_block(block, x, y):
-                        if ship_area.place_block(block, x, y):
-                            print(f"      ✅ Placed at ({x}, {y})")
-                            placed_count += 1
-                            placed = True
-                            break
+        # 자항선 경계 그리기
+        ship_rect = patches.Rectangle(
+            (0, 0), result.width, result.height,
+            linewidth=3, edgecolor='navy', facecolor='lightblue', alpha=0.3
+        )
+        ax.add_patch(ship_rect)
+        
+        # 선수 여백 표시 (오른쪽)
+        if result.bow_clearance > 0:
+            bow_rect = patches.Rectangle(
+                (result.width - result.bow_clearance, 0), 
+                result.bow_clearance, result.height,
+                linewidth=2, edgecolor='red', facecolor='red', alpha=0.2
+            )
+            ax.add_patch(bow_rect)
+        
+        # 선미 여백 표시 (왼쪽)
+        if result.stern_clearance > 0:
+            stern_rect = patches.Rectangle(
+                (0, 0), result.stern_clearance, result.height,
+                linewidth=2, edgecolor='purple', facecolor='purple', alpha=0.2
+            )
+            ax.add_patch(stern_rect)
+        
+        # 배치된 블록들 그리기
+        placed_blocks_list = list(result.placed_blocks.values())
+        total_blocks = len(placed_blocks_list) + len(result.unplaced_blocks)
+        placed_count = len(placed_blocks_list)
+        success_rate = (placed_count / total_blocks) * 100 if total_blocks > 0 else 0
+        
+        # 블록 타입별 분류
+        crane_blocks = [b for b in placed_blocks_list if getattr(b, 'block_type', 'unknown') == 'crane']
+        trestle_blocks = [b for b in placed_blocks_list if getattr(b, 'block_type', 'unknown') == 'trestle']
+        
+        for block in placed_blocks_list:
+            if block.position is None:
+                continue
                 
-                if placed:
-                    break
+            pos_x, pos_y = block.position
             
-            if not placed:
-                print(f"      ❌ Could not place")
+            # 블록 타입에 따른 색상 결정
+            block_type = getattr(block, 'block_type', 'unknown')
+            if block_type == 'crane':
+                color = 'orange'
+                alpha = 0.7
+            elif block_type == 'trestle':
+                color = 'green'
+                alpha = 0.7
+            else:
+                color = 'gray'
+                alpha = 0.6
+            
+            block_rect = patches.Rectangle(
+                (pos_x, pos_y), block.width, block.height,
+                linewidth=1, edgecolor='black', facecolor=color, alpha=alpha
+            )
+            ax.add_patch(block_rect)
+            
+            # 블록 ID 표시
+            ax.text(pos_x + block.width/2, pos_y + block.height/2, 
+                   block.id, ha='center', va='center', fontsize=8, fontweight='bold')
         
-        elapsed_time = time.time() - start_time
+        # 축 설정
+        ax.set_xlim(-5, result.width + 5)
+        ax.set_ylim(-5, result.height + 5)
+        ax.set_xlabel(f'X (grids) | 1 grid = {result.grid_resolution}m', fontsize=12)
+        ax.set_ylabel(f'Y (grids) | 1 grid = {result.grid_resolution}m', fontsize=12)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
         
-        print(f"\n🎉 Fallback greedy placement complete!")
-        print(f"   ⏱️ Time: {elapsed_time:.1f}s")
-        print(f"   📦 Placed: {len(ship_area.placed_blocks)}/{len(blocks)} blocks")
-        print(f"   📊 Success rate: {len(ship_area.placed_blocks)/len(blocks)*100:.1f}%")
-        print(f"   🎯 Space utilization: {ship_area.get_placement_score():.3f}")
+        # 공간 활용률 계산
+        total_area = result.width * result.height
+        used_area = sum(block.get_area() for block in placed_blocks_list)
+        space_utilization = (used_area / total_area) * 100
         
-        return ship_area
-    
-    def visualize(self, ship_area, save_path=None, show=True):
-        """시각화"""
-        print(f"\n🎨 Creating visualization...")
+        plt.title(f'Ship Block Placement Result\n'
+                 f'Ship: {result.ship_width_m}m × {result.ship_height_m}m | '
+                 f'Resolution: {result.grid_resolution}m/grid | '
+                 f'Placed: {placed_count}/{total_blocks} ({success_rate:.1f}%) | '
+                 f'Crane: {len(crane_blocks)} | Trestle: {len(trestle_blocks)} | '
+                 f'Space Usage: {space_utilization:.1f}%',
+                 fontsize=16, pad=20)
         
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+        # 범례
+        legend_elements = [
+            patches.Patch(color='orange', alpha=0.7, label='Crane Blocks'),
+            patches.Patch(color='green', alpha=0.7, label='Trestle Blocks'),
+            patches.Patch(color='red', alpha=0.2, label='Bow Clearance (5m)'),
+            patches.Patch(color='purple', alpha=0.2, label='Stern Clearance (0m)'),
+            patches.Patch(color='lightblue', alpha=0.3, label='Ship Area')
+        ]
+        ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
         
-        # 왼쪽: 배치 결과
-        self._draw_layout(ax1, ship_area)
+        # 상세 통계 텍스트
+        stats_text = f"""Placement Statistics:
+   Ship Size: {result.ship_width_m}m × {result.ship_height_m}m
+   Grid Resolution: {result.grid_resolution}m/grid
+   Total blocks: {total_blocks}
+   Placed: {placed_count}
+   Unplaced: {len(result.unplaced_blocks)}
+   Success rate: {success_rate:.1f}%
+
+Block Types:
+   Crane: {len(crane_blocks)}
+   Trestle: {len(trestle_blocks)}
+
+Space Utilization:
+   Used area: {used_area:,} cells
+   Total area: {total_area:,} cells
+   Utilization: {space_utilization:.1f}%
+
+Constraints:
+   Block spacing: {result.block_spacing * result.grid_resolution}m
+   Bow clearance: {result.bow_clearance * result.grid_resolution}m
+   Stern clearance: {result.stern_clearance * result.grid_resolution}m
+"""
         
-        # 오른쪽: 통계
-        self._draw_stats(ax2, ship_area)
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+               fontsize=10, va='top', ha='left', fontfamily='monospace',
+               bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8))
         
-        algorithm_name = "Modified Original (Y-first)" if ORIGINAL_ALGORITHM_AVAILABLE else "Fallback Greedy"
-        plt.suptitle(f'🚢 Ship Block Placement Result ({algorithm_name})', fontsize=16, fontweight='bold')
         plt.tight_layout()
         
+        # 저장
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"   💾 Saved: {save_path}")
+            print(f"   Visualization saved: {save_path}")
         
+        # 표시
         if show:
             plt.show()
         
         return fig
-    
-    def _draw_layout(self, ax, ship_area):
-        """레이아웃 그리기"""
-        ax.set_xlim(0, ship_area.width)
-        ax.set_ylim(0, ship_area.height)
-        ax.set_aspect('equal')
-        ax.grid(True, alpha=0.3)
-        
-        # 선수 여백 표시
-        bow_x = ship_area.width - ship_area.bow_clearance
-        bow_rect = patches.Rectangle(
-            (bow_x, 0), ship_area.bow_clearance, ship_area.height,
-            facecolor='red', alpha=0.2, edgecolor='red', linewidth=2
-        )
-        ax.add_patch(bow_rect)
-        ax.text(bow_x + ship_area.bow_clearance/2, ship_area.height/2, 
-               'BOW\n(5m)', ha='center', va='center', fontsize=10, 
-               color='red', fontweight='bold')
-        
-        # 배치된 블록들
-        colors = plt.cm.Set3(np.linspace(0, 1, len(ship_area.placed_blocks)))
-        
-        for i, (block_id, block) in enumerate(ship_area.placed_blocks.items()):
-            footprint = block.get_positioned_footprint()
-            color = colors[i % len(colors)]
-            
-            for x, y in footprint:
-                rect = patches.Rectangle(
-                    (x, y), 1, 1,
-                    facecolor=color, alpha=0.7,
-                    edgecolor='black', linewidth=1
-                )
-                ax.add_patch(rect)
-            
-            # 블록 ID 표시
-            if footprint:
-                center_x = sum(x for x, y in footprint) / len(footprint)
-                center_y = sum(y for x, y in footprint) / len(footprint)
-                
-                type_symbol = "🔧" if getattr(block, 'block_type', 'unknown') == 'crane' else "🚚"
-                ax.text(center_x + 0.5, center_y + 0.5, f"{type_symbol}\n{block_id[:8]}",
-                       ha='center', va='center', fontsize=8, fontweight='bold')
-        
-        algorithm_name = "Modified Original (Y-first)" if ORIGINAL_ALGORITHM_AVAILABLE else "Fallback Greedy"
-        ax.set_title(f'Ship Layout - {algorithm_name}')
-        ax.set_xlabel('X (Grid)')
-        ax.set_ylabel('Y (Grid)')
-    
-    def _draw_stats(self, ax, ship_area):
-        """통계 그리기"""
-        ax.axis('off')
-        
-        total_blocks = len(ship_area.placed_blocks) + len(ship_area.unplaced_blocks)
-        placed_blocks = len(ship_area.placed_blocks)
-        success_rate = (placed_blocks / total_blocks * 100) if total_blocks > 0 else 0
-        
-        placed_area = sum(block.get_area() for block in ship_area.placed_blocks.values())
-        total_area = ship_area.width * ship_area.height
-        space_utilization = (placed_area / total_area * 100)
-        
-        crane_blocks = [b for b in ship_area.placed_blocks.values() 
-                       if hasattr(b, 'block_type') and b.block_type == 'crane']
-        trestle_blocks = [b for b in ship_area.placed_blocks.values() 
-                         if hasattr(b, 'block_type') and b.block_type == 'trestle']
-        
-        algorithm_name = "Modified Original (Y-first)" if ORIGINAL_ALGORITHM_AVAILABLE else "Fallback Greedy"
-        
-        stats_text = f"""
-📊 PLACEMENT STATISTICS (MODIFIED ORIGINAL)
-
-🧠 Algorithm: {algorithm_name}
-🔄 Fill Order: Y-axis first (modified from original X-axis first)
-
-🚢 Ship Info:
-   Size: {self.ship_width}m × {self.ship_height}m
-   Grid: {ship_area.width} × {ship_area.height}
-   Resolution: {self.grid_resolution}m/grid
-
-📦 Block Placement:
-   Total blocks: {total_blocks}
-   Placed: {placed_blocks}
-   Unplaced: {len(ship_area.unplaced_blocks)}
-   Success rate: {success_rate:.1f}%
-
-🏗️ Block Types:
-   🔧 Crane: {len(crane_blocks)}
-   🚚 Trestle: {len(trestle_blocks)}
-
-📐 Space Utilization:
-   Used area: {placed_area:,} cells
-   Total area: {total_area:,} cells
-   Utilization: {space_utilization:.1f}%
-
-⚠️ Constraints Applied:
-   ✅ Block spacing: {ship_area.block_spacing * self.grid_resolution}m
-   ✅ Bow clearance: {ship_area.bow_clearance * self.grid_resolution}m
-
-🔧 Original Algorithm Modifications:
-   ✅ Height-based block sorting (was width-based)
-   ✅ Y-axis priority scoring (was X-axis priority)
-   ✅ Top alignment preference (was left alignment)
-   ✅ Ship constraint integration
-"""
-        
-        ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
-               fontsize=9, va='top', ha='left', fontfamily='monospace',
-               bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8))
 
 def main():
     """메인 실행 함수"""
     if len(sys.argv) < 2:
         print("🚢" + "="*70)
-        print("SHIP BLOCK PLACEMENT SYSTEM (MODIFIED ORIGINAL)")
+        print("Ship Block Placement System")
         print("🚢" + "="*70)
         print("")
-        print("사용법:")
-        print("  python ship_placer_original_y_first.py <processed_blocks.json>")
-        print("  python ship_placer_original_y_first.py <processed_blocks.json> <max_blocks>")
-        print("  python ship_placer_original_y_first.py <processed_blocks.json> <max_blocks> <max_time>")
+        print("Usage:")
+        print("  python ship_placer.py <file.csv|file.json>")
+        print("  python ship_placer.py <file.csv|file.json> <max_blocks>")
+        print("  python ship_placer.py <file.csv|file.json> <max_blocks> <max_time>")
+        print("  python ship_placer.py <file.csv|file.json> <max_blocks> <max_time> <ship_width> <ship_height>")
         print("")
-        print("예시:")
-        print("  python ship_placer_original_y_first.py 2d_blocks_output/block_processing_results.json")
-        print("  python ship_placer_original_y_first.py results.json 10")
-        print("  python ship_placer_original_y_first.py results.json 20 120")
+        print("Examples:")
+        print("  python ship_placer.py blocks_summary.csv")
+        print("  python ship_placer.py block_processing_results.json 20")
+        print("  python ship_placer.py blocks_summary.csv 15 120")
+        print("  python ship_placer.py blocks_summary.csv 10 60 100 40")
         print("")
-        print("✨ 특징 (MODIFIED ORIGINAL):")
-        print("  🚢 자항선 크기: 84m × 36m")
-        print("  📐 제약조건: 블록 간격 1m, 선수 여백 5m")
-        print("  🧠 알고리즘: 기존 프로젝트 알고리즘을 Y축 우선으로 수정")
-        print("  🎯 원본 Bin Packing 전략 유지 (Top-Left, Adjacent, Boundary)")
-        print("  📊 원본 6가지 휴리스틱 기준 유지 (가중치 조정)")
-        print("")
-        print("🔧 원본 알고리즘에서 수정된 부분:")
-        print("  - algorithms/candidate_generator.py:")
-        print("    • 탐색 순서: Y축 먼저 X축 나중 → X축 먼저 Y축 나중")
-        print("    • 점수 계산: X축 우선 → Y축 우선")
-        print("    • 정렬 방향: 왼쪽 정렬 → 위쪽 정렬")
-        print("  - algorithms/backtracking_placer.py:")
-        print("    • 블록 정렬: 너비 우선 → 높이 우선")
-        print("  - models/placement_area.py:")
-        print("    • 자항선 제약조건 추가 (선수 여백, 블록 간격)")
-        print("")
-        print("⚠️ 참고:")
-        print("  - 수정된 원본 알고리즘 파일들이 필요합니다")
-        print("  - 원본 알고리즘 없을 시 간단한 그리디 알고리즘 사용")
+        print("Features:")
+        print("  Ship size: Custom (default: 84m × 36m)")
+        print("  Resolution: Configurable (default: 1m/grid)")
+        print("  Constraints: 2m block spacing, 5m bow clearance, 0m stern clearance")
+        print("  CSV/JSON file support")
+        print("  Real-time visualization")
+        print("  Original algorithm required")
         return
     
-    json_path = sys.argv[1]
+    # 인수 파싱
+    file_path = sys.argv[1]
     max_blocks = int(sys.argv[2]) if len(sys.argv) > 2 else None
     max_time = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+    ship_width = float(sys.argv[4]) if len(sys.argv) > 4 else 84.0
+    ship_height = float(sys.argv[5]) if len(sys.argv) > 5 else 36.0
     
     try:
         print("🚢" + "="*70)
-        print("SHIP BLOCK PLACEMENT SYSTEM (MODIFIED ORIGINAL)")
+        print("Ship Block Placement System")
         print("🚢" + "="*70)
         
-        if ORIGINAL_ALGORITHM_AVAILABLE:
-            print("✅ Modified original project algorithm modules available")
-            print("🧠 Will use: Modified Original (Y-first Heuristic Backtracking)")
-            print("🔧 Modifications: Y-axis priority, Height-based sorting, Top alignment")
-        else:
-            print("⚠️ Original project algorithm modules not found")
-            print("🧠 Will use: Simple Greedy (fallback)")
-        
         # 배치 시스템 생성
-        placer = ShipPlacer(ship_width=84, ship_height=36, grid_resolution=2.0)
+        placer = ShipPlacer(
+            ship_width_m=ship_width, 
+            ship_height_m=ship_height, 
+            grid_resolution=1.0
+        )
         
-        # 블록 로드
-        blocks = placer.load_blocks(json_path, max_blocks)
+        # 파일 확장자에 따라 로드 방법 선택
+        file_ext = Path(file_path).suffix.lower()
+        
+        if file_ext == '.csv':
+            blocks = placer.load_blocks_from_csv(file_path, max_blocks)
+        elif file_ext == '.json':
+            blocks = placer.load_blocks_from_json(file_path, max_blocks)
+        else:
+            print(f"❌ Unsupported file format: {file_ext}")
+            print(f"   Supported formats: .csv, .json")
+            return
         
         if not blocks:
             print("❌ No blocks loaded")
@@ -481,42 +503,26 @@ def main():
         # 배치 실행
         result = placer.place_blocks(blocks, max_time)
         
-        # 결과 확인
-        print(f"\n🔍 Final result check:")
-        print(f"   result object exists: {result is not None}")
         if result:
-            print(f"   placed_blocks count: {len(result.placed_blocks)}")
-            print(f"   unplaced_blocks count: {len(result.unplaced_blocks)}")
-        
-        # 시각화
-        if result and len(result.placed_blocks) > 0:
-            output_dir = Path(json_path).parent
-            viz_path = output_dir / "ship_placement_result_modified_original.png"
+            # 시각화
+            output_dir = Path(file_path).parent
+            save_filename = f"ship_placement_{Path(file_path).stem}_{ship_width}x{ship_height}.png"
+            viz_path = output_dir / save_filename
             
             placer.visualize(result, save_path=viz_path, show=True)
             
-            print(f"\n🎉 === MODIFIED ORIGINAL PLACEMENT COMPLETE! ===")
-            print(f"✅ Placed {len(result.placed_blocks)} blocks successfully")
-            print(f"📊 Space utilization: {result.get_placement_score():.1%}")
-            print(f"🎨 Visualization saved: {viz_path}")
-            print(f"🔄 Fill order: Y-axis first (modified from original)")
-            
-            if ORIGINAL_ALGORITHM_AVAILABLE:
-                print(f"🧠 Algorithm used: Modified Original Project (Y-first Heuristic Backtracking)")
-                print(f"🔧 Key modifications:")
-                print(f"   - Height-based block sorting (was width-based)")
-                print(f"   - Y-axis priority heuristic (was X-axis priority)")
-                print(f"   - Top alignment preference (was left alignment)")
-                print(f"   - Ship constraints integration")
-            else:
-                print(f"🧠 Algorithm used: Fallback Simple Greedy")
+            print(f"\n🎉 === Ship Placement Complete! ===")
+            print(f"Ship size: {ship_width}m × {ship_height}m")
+            print(f"Placed blocks: {len(result.placed_blocks)}/{len(result.placed_blocks) + len(result.unplaced_blocks)}")
+            print(f"Success rate: {len(result.placed_blocks)/(len(result.placed_blocks) + len(result.unplaced_blocks))*100:.1f}%")
+            print(f"Result saved: {viz_path}")
         else:
-            print(f"\n❌ No blocks were placed")
+            print("❌ Placement failed")
         
-        input("\n아무 키나 눌러서 종료...")
-        
+    except FileNotFoundError:
+        print(f"❌ File not found: {file_path}")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"❌ Error occurred: {e}")
         import traceback
         traceback.print_exc()
 
