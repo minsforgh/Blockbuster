@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-1m 해상도 자항선 블록 배치 시스템 (원본 알고리즘 완전 호환)
-- 84m × 36m 자항선 (84 × 36 그리드)
-- 선미 5m 여유, 블록간 1m 여유
+자항선 블록 배치 시스템 (원본 알고리즘 완전 호환)
+- 사용자 지정 자항선 크기 (m 단위 입력)
+- 유연한 그리드 해상도 설정
+- 블록간 간격, 선수/선미 여유 공간 설정
 - 크레인/트레슬 블록 분류
 - CSV 및 JSON 파일 지원
 - 원본 BacktrackingPlacer 완전 호환
@@ -38,32 +39,40 @@ try:
     ORIGINAL_ALGORITHM_AVAILABLE = True
     print(f"[INFO] Original algorithm modules loaded successfully")
 except ImportError as e:
-    print(f"[INFO] Original algorithm modules not found, using simple placement algorithm")
+    print(f"[INFO] Original algorithm modules not found")
     ORIGINAL_ALGORITHM_AVAILABLE = False
 
 class ShipPlacementArea(PlacementArea):
     """원본 PlacementArea를 상속받은 자항선 특화 배치 영역"""
     
-    def __init__(self, width=84, height=36, grid_resolution=1.0):
+    def __init__(self, ship_width_m, ship_height_m, grid_resolution=1.0):
         """
         Args:
-            width (int): 자항선 너비 그리드 수
-            height (int): 자항선 높이 그리드 수
+            ship_width_m (float): 자항선 너비 (m)
+            ship_height_m (float): 자항선 높이 (m) 
             grid_resolution (float): 그리드 해상도 (m)
         """
-        super().__init__(width, height)
-        self.grid_resolution = grid_resolution
-        self.actual_width = width * grid_resolution
-        self.actual_height = height * grid_resolution
+        # 그리드 크기 계산 (m를 그리드로 변환)
+        width_grids = int(ship_width_m / grid_resolution)
+        height_grids = int(ship_height_m / grid_resolution)
         
-        # 자항선 제약조건 (그리드 단위)
-        self.bow_clearance = int(5.0 / grid_resolution)  # 선미 5m
-        self.block_spacing = int(1.0 / grid_resolution)  # 블록간 1m
+        super().__init__(width_grids, height_grids)
+        
+        self.grid_resolution = grid_resolution
+        self.ship_width_m = ship_width_m
+        self.ship_height_m = ship_height_m
+        
+        # 자항선 제약조건 (그리드 단위로 변환)
+        self.bow_clearance = int(5.0 / grid_resolution)      # 선수 5m
+        self.stern_clearance = int(0.0 / grid_resolution)    # 선미 0m  
+        self.block_spacing = int(2.0 / grid_resolution)      # 블록간 2m
         
         print(f"Ship Placement Area Initialized:")
-        print(f"   Size: {self.actual_width}m × {self.actual_height}m ({width} × {height} grids)")
-        print(f"   Grid resolution: {grid_resolution}m")
+        print(f"   Ship size: {ship_width_m}m × {ship_height_m}m")
+        print(f"   Grid size: {width_grids} × {height_grids} grids")
+        print(f"   Grid resolution: {grid_resolution}m/grid")
         print(f"   Bow clearance: {self.bow_clearance} grids ({self.bow_clearance * grid_resolution}m)")
+        print(f"   Stern clearance: {self.stern_clearance} grids ({self.stern_clearance * grid_resolution}m)")
         print(f"   Block spacing: {self.block_spacing} grids ({self.block_spacing * grid_resolution}m)")
     
     def can_place_block(self, block, pos_x, pos_y):
@@ -72,12 +81,17 @@ class ShipPlacementArea(PlacementArea):
         if not super().can_place_block(block, pos_x, pos_y):
             return False
         
-        # 2. 선미(오른쪽) 여백 확인
+        # 2. 선수(오른쪽) 여백 확인
         block_right_edge = pos_x + block.width
         if block_right_edge > self.width - self.bow_clearance:
             return False
         
-        # 3. 다른 블록과의 간격 확인
+        # 3. 선미(왼쪽) 여백 확인
+        block_left_edge = pos_x
+        if block_left_edge < self.stern_clearance:
+            return False
+        
+        # 4. 다른 블록과의 간격 확인
         footprint = block.get_footprint()
         
         for vx, vy in footprint:
@@ -138,60 +152,18 @@ class SimpleBlock:
         self.max_x = self.width - 1
         self.max_y = self.height - 1
 
-class GreedyPlacer:
-    """간단한 그리디 배치 알고리즘 (원본 알고리즘 없을 때 사용)"""
+class ShipPlacer:
+    """자항선 배치 시스템"""
     
-    def __init__(self, area, blocks, max_time=60):
-        self.area = area
-        self.blocks = blocks
-        self.max_time = max_time
-        self.start_time = None
-    
-    def optimize(self):
-        """그리디 배치 실행"""
-        self.start_time = time.time()
-        
-        # 블록을 면적 순으로 정렬 (큰 것부터)
-        sorted_blocks = sorted(self.blocks, 
-                             key=lambda b: b.get_area(), 
-                             reverse=True)
-        
-        # area에 블록들 추가
-        for block in sorted_blocks:
-            self.area.unplaced_blocks[block.id] = block
-        
-        placed_count = 0
-        for block in sorted_blocks:
-            # 시간 제한 확인
-            if time.time() - self.start_time > self.max_time:
-                break
-            
-            # 가능한 위치 탐색 (왼쪽 위부터)
-            placed = False
-            for y in range(self.area.height - block.height + 1):
-                for x in range(self.area.width - block.width + 1):
-                    if self.area.can_place_block(block, x, y):
-                        if self.area.place_block(block, x, y):
-                            placed_count += 1
-                            placed = True
-                            break
-                if placed:
-                    break
-        
-        return self.area
-
-class ShipPlacer1M:
-    """1m 해상도 자항선 배치 시스템"""
-    
-    def __init__(self, ship_width=84, ship_height=36, grid_resolution=1.0):
-        self.ship_width = ship_width
-        self.ship_height = ship_height
+    def __init__(self, ship_width_m=84, ship_height_m=36, grid_resolution=1.0):
+        self.ship_width_m = ship_width_m
+        self.ship_height_m = ship_height_m
         self.grid_resolution = grid_resolution
         
-        print(f"1M Resolution Ship Placement System Initialized")
-        print(f"   Ship: {ship_width}m × {ship_height}m")
+        print(f"Ship Placement System Initialized")
+        print(f"   Ship: {ship_width_m}m × {ship_height_m}m")
         print(f"   Resolution: {grid_resolution}m/grid")
-        print(f"   Grid: {int(ship_width/grid_resolution)} × {int(ship_height/grid_resolution)}")
+        print(f"   Grid count: {int(ship_width_m/grid_resolution)} × {int(ship_height_m/grid_resolution)}")
     
     def load_blocks_from_csv(self, csv_path, max_blocks=None):
         """CSV 파일에서 블록 로드"""
@@ -295,6 +267,11 @@ class ShipPlacer1M:
     
     def place_blocks(self, blocks, max_time=60):
         """블록 배치 실행"""
+        if not ORIGINAL_ALGORITHM_AVAILABLE:
+            print("❌ Original algorithm modules not available")
+            print("   Required modules: models.voxel_block, models.placement_area, algorithms.backtracking_placer")
+            return None
+            
         print(f"Block placement started...")
         print(f"   Blocks to place: {len(blocks)}")
         print(f"   Max time: {max_time} seconds")
@@ -302,27 +279,20 @@ class ShipPlacer1M:
         
         # 자항선 특화 배치 영역 생성
         area = ShipPlacementArea(
-            width=int(self.ship_width/self.grid_resolution),
-            height=int(self.ship_height/self.grid_resolution),
+            ship_width_m=self.ship_width_m,
+            ship_height_m=self.ship_height_m,
             grid_resolution=self.grid_resolution
         )
         
-        if ORIGINAL_ALGORITHM_AVAILABLE:
-            print(f"Using original algorithm (heuristic backtracking)")
-            try:
-                placer = BacktrackingPlacer(area, blocks, max_time)
-                result = placer.optimize()
-                return result
-                
-            except Exception as e:
-                print(f"Original algorithm failed: {e}")
-                print(f"Switching to simple algorithm")
-        
-        print(f"Using simple greedy algorithm")
-        placer = GreedyPlacer(area, blocks, max_time)
-        result = placer.optimize()
-        
-        return result
+        print(f"Using original algorithm (heuristic backtracking)")
+        try:
+            placer = BacktrackingPlacer(area, blocks, max_time)
+            result = placer.optimize()
+            return result
+            
+        except Exception as e:
+            print(f"❌ Original algorithm failed: {e}")
+            return None
     
     def visualize(self, result, save_path=None, show=True):
         """배치 결과 시각화"""
@@ -331,7 +301,7 @@ class ShipPlacer1M:
         # 영어 폰트 재설정
         plt.rcParams['font.family'] = ['DejaVu Sans']
         
-        fig, ax = plt.subplots(1, 1, figsize=(16, 10))
+        fig, ax = plt.subplots(1, 1, figsize=(20, 12))
         
         # 자항선 경계 그리기
         ship_rect = patches.Rectangle(
@@ -340,81 +310,96 @@ class ShipPlacer1M:
         )
         ax.add_patch(ship_rect)
         
-        # 선미 여유 영역 표시
-        bow_rect = patches.Rectangle(
-            (result.width - result.bow_clearance, 0), 
-            result.bow_clearance, result.height,
-            linewidth=2, edgecolor='red', facecolor='red', alpha=0.2
-        )
-        ax.add_patch(bow_rect)
+        # 선수 여백 표시 (오른쪽)
+        if result.bow_clearance > 0:
+            bow_rect = patches.Rectangle(
+                (result.width - result.bow_clearance, 0), 
+                result.bow_clearance, result.height,
+                linewidth=2, edgecolor='red', facecolor='red', alpha=0.2
+            )
+            ax.add_patch(bow_rect)
+        
+        # 선미 여백 표시 (왼쪽)
+        if result.stern_clearance > 0:
+            stern_rect = patches.Rectangle(
+                (0, 0), result.stern_clearance, result.height,
+                linewidth=2, edgecolor='purple', facecolor='purple', alpha=0.2
+            )
+            ax.add_patch(stern_rect)
         
         # 배치된 블록들 그리기
-        colors = {'crane': 'orange', 'trestle': 'green', 'unknown': 'gray'}
-        
-        # 원본 알고리즘: placed_blocks는 딕셔너리
-        if hasattr(result.placed_blocks, 'values'):
-            placed_blocks_list = list(result.placed_blocks.values())
-        else:
-            placed_blocks_list = result.placed_blocks
-        
-        for block in placed_blocks_list:
-            if hasattr(block, 'position') and block.position is not None:
-                pos_x, pos_y = block.position
-                color = colors.get(block.block_type, 'gray')
-                
-                # 블록 사각형
-                block_rect = patches.Rectangle(
-                    (pos_x, pos_y), block.width, block.height,
-                    linewidth=1, edgecolor='black', facecolor=color, alpha=0.7
-                )
-                ax.add_patch(block_rect)
-                
-                # 블록 ID 텍스트
-                center_x = pos_x + block.width / 2
-                center_y = pos_y + block.height / 2
-                block_id_text = block.id if hasattr(block, 'id') else block.block_id
-                ax.text(center_x, center_y, block_id_text, 
-                       ha='center', va='center', fontsize=8, 
-                       color='white', weight='bold')
-        
-        # 축 설정
-        ax.set_xlim(-2, result.width + 2)
-        ax.set_ylim(-2, result.height + 2)
-        ax.set_aspect('equal')
-        ax.grid(True, alpha=0.3)
-        ax.set_xlabel('X Direction (m)', fontsize=12)
-        ax.set_ylabel('Y Direction (m)', fontsize=12)
-        
-        # 제목과 통계
-        total_blocks = len(result.placed_blocks) + len(result.unplaced_blocks)
-        placed_count = len(result.placed_blocks)
+        placed_blocks_list = list(result.placed_blocks.values())
+        total_blocks = len(placed_blocks_list) + len(result.unplaced_blocks)
+        placed_count = len(placed_blocks_list)
         success_rate = (placed_count / total_blocks) * 100 if total_blocks > 0 else 0
         
+        # 블록 타입별 분류
         crane_blocks = [b for b in placed_blocks_list if getattr(b, 'block_type', 'unknown') == 'crane']
         trestle_blocks = [b for b in placed_blocks_list if getattr(b, 'block_type', 'unknown') == 'trestle']
+        
+        for block in placed_blocks_list:
+            if block.position is None:
+                continue
+                
+            pos_x, pos_y = block.position
+            
+            # 블록 타입에 따른 색상 결정
+            block_type = getattr(block, 'block_type', 'unknown')
+            if block_type == 'crane':
+                color = 'orange'
+                alpha = 0.7
+            elif block_type == 'trestle':
+                color = 'green'
+                alpha = 0.7
+            else:
+                color = 'gray'
+                alpha = 0.6
+            
+            block_rect = patches.Rectangle(
+                (pos_x, pos_y), block.width, block.height,
+                linewidth=1, edgecolor='black', facecolor=color, alpha=alpha
+            )
+            ax.add_patch(block_rect)
+            
+            # 블록 ID 표시
+            ax.text(pos_x + block.width/2, pos_y + block.height/2, 
+                   block.id, ha='center', va='center', fontsize=8, fontweight='bold')
+        
+        # 축 설정
+        ax.set_xlim(-5, result.width + 5)
+        ax.set_ylim(-5, result.height + 5)
+        ax.set_xlabel(f'X (grids) | 1 grid = {result.grid_resolution}m', fontsize=12)
+        ax.set_ylabel(f'Y (grids) | 1 grid = {result.grid_resolution}m', fontsize=12)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
         
         # 공간 활용률 계산
         total_area = result.width * result.height
         used_area = sum(block.get_area() for block in placed_blocks_list)
         space_utilization = (used_area / total_area) * 100
         
-        plt.title(f'Ship Block Placement Result (1m Resolution)\n'
+        plt.title(f'Ship Block Placement Result\n'
+                 f'Ship: {result.ship_width_m}m × {result.ship_height_m}m | '
+                 f'Resolution: {result.grid_resolution}m/grid | '
                  f'Placed: {placed_count}/{total_blocks} ({success_rate:.1f}%) | '
                  f'Crane: {len(crane_blocks)} | Trestle: {len(trestle_blocks)} | '
                  f'Space Usage: {space_utilization:.1f}%',
-                 fontsize=14, pad=20)
+                 fontsize=16, pad=20)
         
         # 범례
         legend_elements = [
             patches.Patch(color='orange', alpha=0.7, label='Crane Blocks'),
             patches.Patch(color='green', alpha=0.7, label='Trestle Blocks'),
             patches.Patch(color='red', alpha=0.2, label='Bow Clearance (5m)'),
+            patches.Patch(color='purple', alpha=0.2, label='Stern Clearance (0m)'),
             patches.Patch(color='lightblue', alpha=0.3, label='Ship Area')
         ]
         ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
         
         # 상세 통계 텍스트
         stats_text = f"""Placement Statistics:
+   Ship Size: {result.ship_width_m}m × {result.ship_height_m}m
+   Grid Resolution: {result.grid_resolution}m/grid
    Total blocks: {total_blocks}
    Placed: {placed_count}
    Unplaced: {len(result.unplaced_blocks)}
@@ -432,6 +417,7 @@ Space Utilization:
 Constraints:
    Block spacing: {result.block_spacing * result.grid_resolution}m
    Bow clearance: {result.bow_clearance * result.grid_resolution}m
+   Stern clearance: {result.stern_clearance * result.grid_resolution}m
 """
         
         ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
@@ -455,39 +441,48 @@ def main():
     """메인 실행 함수"""
     if len(sys.argv) < 2:
         print("🚢" + "="*70)
-        print("1M Resolution Ship Block Placement System")
+        print("Ship Block Placement System")
         print("🚢" + "="*70)
         print("")
         print("Usage:")
-        print("  python ship_placer_1m.py <file.csv|file.json>")
-        print("  python ship_placer_1m.py <file.csv|file.json> <max_blocks>")
-        print("  python ship_placer_1m.py <file.csv|file.json> <max_blocks> <max_time>")
+        print("  python ship_placer.py <file.csv|file.json>")
+        print("  python ship_placer.py <file.csv|file.json> <max_blocks>")
+        print("  python ship_placer.py <file.csv|file.json> <max_blocks> <max_time>")
+        print("  python ship_placer.py <file.csv|file.json> <max_blocks> <max_time> <ship_width> <ship_height>")
         print("")
         print("Examples:")
-        print("  python ship_placer_1m.py blocks_summary.csv")
-        print("  python ship_placer_1m.py block_processing_results.json 20")
-        print("  python ship_placer_1m.py blocks_summary.csv 15 120")
+        print("  python ship_placer.py blocks_summary.csv")
+        print("  python ship_placer.py block_processing_results.json 20")
+        print("  python ship_placer.py blocks_summary.csv 15 120")
+        print("  python ship_placer.py blocks_summary.csv 10 60 100 40")
         print("")
         print("Features:")
-        print("  Ship size: 84m × 36m (84 × 36 grid)")
-        print("  Constraints: 1m block spacing, 5m bow clearance")
+        print("  Ship size: Custom (default: 84m × 36m)")
+        print("  Resolution: Configurable (default: 1m/grid)")
+        print("  Constraints: 2m block spacing, 5m bow clearance, 0m stern clearance")
         print("  CSV/JSON file support")
         print("  Real-time visualization")
-        print("  Original/Simple algorithm auto-selection")
+        print("  Original algorithm required")
         return
     
     # 인수 파싱
     file_path = sys.argv[1]
     max_blocks = int(sys.argv[2]) if len(sys.argv) > 2 else None
     max_time = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+    ship_width = float(sys.argv[4]) if len(sys.argv) > 4 else 84.0
+    ship_height = float(sys.argv[5]) if len(sys.argv) > 5 else 36.0
     
     try:
         print("🚢" + "="*70)
-        print("1M Resolution Ship Block Placement System")
+        print("Ship Block Placement System")
         print("🚢" + "="*70)
         
         # 배치 시스템 생성
-        placer = ShipPlacer1M(ship_width=84, ship_height=36, grid_resolution=1.0)
+        placer = ShipPlacer(
+            ship_width_m=ship_width, 
+            ship_height_m=ship_height, 
+            grid_resolution=1.0
+        )
         
         # 파일 확장자에 따라 로드 방법 선택
         file_ext = Path(file_path).suffix.lower()
@@ -511,12 +506,13 @@ def main():
         if result:
             # 시각화
             output_dir = Path(file_path).parent
-            save_filename = f"ship_placement_1m_{Path(file_path).stem}.png"
+            save_filename = f"ship_placement_{Path(file_path).stem}_{ship_width}x{ship_height}.png"
             viz_path = output_dir / save_filename
             
             placer.visualize(result, save_path=viz_path, show=True)
             
-            print(f"\n🎉 === 1M Resolution Placement Complete! ===")
+            print(f"\n🎉 === Ship Placement Complete! ===")
+            print(f"Ship size: {ship_width}m × {ship_height}m")
             print(f"Placed blocks: {len(result.placed_blocks)}/{len(result.placed_blocks) + len(result.unplaced_blocks)}")
             print(f"Success rate: {len(result.placed_blocks)/(len(result.placed_blocks) + len(result.unplaced_blocks))*100:.1f}%")
             print(f"Result saved: {viz_path}")

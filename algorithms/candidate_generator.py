@@ -24,7 +24,8 @@ class CandidateGenerator:
 
     def generate_candidates(self, block, consider_rotation=True):
         """
-        블록에 대한 배치 후보 위치 생성
+        Y축을 최대한 채우기 위한 개선된 후보 위치 생성
+        가로 긴 블록은 회전해서 Y축 활용도를 높임
 
         Args:
             block (VoxelBlock): 배치할 블록
@@ -35,22 +36,69 @@ class CandidateGenerator:
         """
         candidates = []
 
-        # 원본 방향으로 후보 위치 생성
-        original_candidates = self._generate_candidates_for_orientation(block)
-        candidates.extend(original_candidates)
-
-        # 회전 고려
-        if consider_rotation:
-            # 블록 회전
-            original_rotation = block.rotation
-            block.rotate()
-
-            # 회전된 방향으로 후보 위치 생성
-            rotated_candidates = self._generate_candidates_for_orientation(block)
-            candidates.extend(rotated_candidates)
-
-            # 블록 원래 방향으로 복원
-            block.rotation = original_rotation
+        if not consider_rotation:
+            # 회전 고려 안 하는 경우: 기존 로직
+            candidates = self._generate_candidates_for_orientation(block)
+        else:
+            # 🎯 Y축 최대 활용을 위한 회전 우선순위 결정
+            original_width = block.width
+            original_height = block.height
+            
+            # 회전 후 크기 계산
+            rotated_width = original_height  
+            rotated_height = original_width
+            
+            # Y축 활용도 비교 (높이가 클수록 Y축을 더 많이 활용)
+            original_y_utilization = original_height / self.placement_area.height
+            rotated_y_utilization = rotated_height / self.placement_area.height
+            
+            # 회전 후 배치 가능한지 확인
+            can_rotate = (rotated_width <= self.placement_area.width and 
+                         rotated_height <= self.placement_area.height)
+            
+            print(f"[DEBUG] 블록 {block.id}: {original_width}x{original_height}")
+            print(f"        원본 Y활용도: {original_y_utilization:.2f}, 회전 Y활용도: {rotated_y_utilization:.2f}")
+            print(f"        회전 가능: {can_rotate}")
+            
+            if can_rotate and rotated_y_utilization > original_y_utilization:
+                # 🟢 회전했을 때 Y축을 더 많이 활용할 수 있는 경우: 회전 우선
+                print(f"        → 회전 우선 시도 (Y축 활용도 향상: {original_y_utilization:.2f} → {rotated_y_utilization:.2f})")
+                
+                # 1. 회전된 방향 먼저 시도
+                original_rotation = block.rotation
+                block.rotate()
+                
+                rotated_candidates = self._generate_candidates_for_orientation(block)
+                if rotated_candidates:  # 회전해서 배치 가능한 위치가 있는 경우
+                    # Y축 활용도 향상 보너스
+                    improvement_bonus = (rotated_y_utilization - original_y_utilization) * 0.5
+                    for x, y, rotation, score in rotated_candidates:
+                        bonus_score = score * (1.0 + improvement_bonus)
+                        candidates.append((x, y, rotation, bonus_score))
+                
+                # 2. 원본 방향 (낮은 우선순위)
+                block.rotation = original_rotation
+                original_candidates = self._generate_candidates_for_orientation(block)
+                candidates.extend(original_candidates)
+                
+            else:
+                # 🔵 원본 방향이 Y축 활용도가 더 좋거나 회전 불가능한 경우: 원본 우선
+                if not can_rotate:
+                    print(f"        → 회전 불가능 (크기 초과)")
+                else:
+                    print(f"        → 원본 우선 (Y축 활용도 더 좋음)")
+                
+                # 1. 원본 방향 먼저 시도
+                original_candidates = self._generate_candidates_for_orientation(block)
+                candidates.extend(original_candidates)
+                
+                # 2. 회전 방향 (가능한 경우만)
+                if can_rotate:
+                    original_rotation = block.rotation
+                    block.rotate()
+                    rotated_candidates = self._generate_candidates_for_orientation(block)
+                    candidates.extend(rotated_candidates)
+                    block.rotation = original_rotation
 
         # 중복 제거
         unique_candidates = []
@@ -212,7 +260,7 @@ class CandidateGenerator:
 
     def _calculate_heuristic_score(self, block, pos_x, pos_y):
         """
-        휴리스틱 점수 계산 (Y축 우선으로 수정)
+        Y축 우선 배치를 위한 개선된 휴리스틱 점수 계산
 
         Args:
             block (VoxelBlock): 배치할 블록
@@ -222,41 +270,55 @@ class CandidateGenerator:
         Returns:
             float: 휴리스틱 점수 (높을수록 좋음)
         """
-        # 1. Y축 우선 배치 점수
-        # Y축 방향으로 먼저 채우기 위해 X값이 작을수록 높은 점수
-        y_first_score = 1.0 - (pos_x / self.placement_area.width)
-
-        # 2. 위쪽 정렬 점수 (Top 전략)
-        # 위쪽에 가까울수록 높은 점수
+        
+        # 🎯 Y축 우선 점수 (기존 X축 우선에서 Y축 우선으로 수정)
+        y_first_score = 1.0 - (pos_x / self.placement_area.width)  # 왼쪽부터 채우기
+        
+        # 위쪽 정렬 점수 
         top_alignment_score = 1.0 - (pos_y / self.placement_area.height)
-
-        # 3. 인접성 점수 (Adjacent 전략)
-        # 다른 블록과 인접할수록 높은 점수
+        
+        # Y축 활용도 점수 (블록이 Y축을 얼마나 활용하는가)
+        y_utilization_score = block.height / self.placement_area.height
+        
+        # Y축 끝까지 채우기 보너스
+        y_edge_bonus = 0
+        if pos_y == 0:  # 위쪽 끝에서 시작
+            y_edge_bonus += 0.1
+        if pos_y + block.height == self.placement_area.height:  # 아래쪽 끝까지 채움
+            y_edge_bonus += 0.2
+        
+        # 인접성 점수
         adjacency_score = self._calculate_adjacency_score(block, pos_x, pos_y)
-
-        # 4. 면적 활용 점수
-        # 블록의 면적이 클수록 높은 점수
+        
+        # 면적 활용 점수
         area_score = block.get_area() / (self.placement_area.width * self.placement_area.height)
-
-        # 5. 경계 활용 점수
-        # 배치 영역의 경계에 인접할수록 높은 점수
+        
+        # 경계 활용 점수
         boundary_score = self._calculate_boundary_score(block, pos_x, pos_y)
-
-        # 6. 공간 효율성 점수
-        # 블록이 차지하는 공간이 조밀할수록 높은 점수
-        density_score = block.get_area() / (block.width * block.height)
-
-        # 가중치를 적용한 종합 점수 (Y축 우선에 맞게 조정)
-        score = (
-            0.4 * y_first_score +      # Y축 우선 배치에 높은 가중치
-            0.2 * top_alignment_score +  # 위쪽 정렬에 가중치
-            0.2 * adjacency_score +
-            0.1 * area_score +
-            0.05 * boundary_score +
-            0.05 * density_score
+        
+        # 🎯 Y축 우선을 위한 가중치 (Y축 관련 점수에 높은 가중치)
+        weights = {
+            'y_first': 0.3,           # 왼쪽부터 채우기
+            'top_align': 0.2,         # 위쪽 정렬
+            'y_utilization': 0.25,    # Y축 활용도 (새로 추가!)
+            'y_edge_bonus': 0.1,      # Y축 끝까지 채우기 보너스 (새로 추가!)
+            'adjacency': 0.1,         # 인접성 (가중치 감소)
+            'area': 0.03,             # 면적 (가중치 감소)
+            'boundary': 0.02          # 경계 활용 (가중치 감소)
+        }
+        
+        # 최종 점수 계산
+        final_score = (
+            weights['y_first'] * y_first_score +
+            weights['top_align'] * top_alignment_score +
+            weights['y_utilization'] * y_utilization_score +
+            weights['y_edge_bonus'] * y_edge_bonus +
+            weights['adjacency'] * adjacency_score +
+            weights['area'] * area_score +
+            weights['boundary'] * boundary_score
         )
-
-        return score
+        
+        return final_score
 
     def _calculate_adjacency_score(self, block, pos_x, pos_y):
         """
