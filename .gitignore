@@ -131,3 +131,6 @@ config_*.json
 # Large data files
 *.csv
 *.xlsx
+
+# Claude Code files
+CLAUDE.md
