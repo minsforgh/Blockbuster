@@ -22,14 +22,15 @@ class CandidateGenerator:
         """
         self.placement_area = placement_area
 
-    def generate_candidates(self, block, consider_rotation=True):
+    def generate_candidates(self, block, consider_rotation=True, max_candidates=20):
         """
-        Y축을 최대한 채우기 위한 개선된 후보 위치 생성
+        Y축을 최대한 채우기 위한 개선된 후보 위치 생성 (최적화됨)
         가로 긴 블록은 회전해서 Y축 활용도를 높임
 
         Args:
             block (VoxelBlock): 배치할 블록
             consider_rotation (bool): 회전 고려 여부
+            max_candidates (int): 최대 후보 위치 수 (성능 최적화)
 
         Returns:
             list: (pos_x, pos_y, rotation, score) 형태의 후보 위치 목록
@@ -38,7 +39,7 @@ class CandidateGenerator:
 
         if not consider_rotation:
             # 회전 고려 안 하는 경우: 기존 로직
-            candidates = self._generate_candidates_for_orientation(block)
+            candidates = self._generate_candidates_for_orientation(block, max_candidates)
         else:
             # 🎯 Y축 최대 활용을 위한 회전 우선순위 결정
             original_width = block.width
@@ -68,7 +69,7 @@ class CandidateGenerator:
                 original_rotation = block.rotation
                 block.rotate()
                 
-                rotated_candidates = self._generate_candidates_for_orientation(block)
+                rotated_candidates = self._generate_candidates_for_orientation(block, max_candidates//2)
                 if rotated_candidates:  # 회전해서 배치 가능한 위치가 있는 경우
                     # Y축 활용도 향상 보너스
                     improvement_bonus = (rotated_y_utilization - original_y_utilization) * 0.5
@@ -78,7 +79,7 @@ class CandidateGenerator:
                 
                 # 2. 원본 방향 (낮은 우선순위)
                 block.rotation = original_rotation
-                original_candidates = self._generate_candidates_for_orientation(block)
+                original_candidates = self._generate_candidates_for_orientation(block, max_candidates//2)
                 candidates.extend(original_candidates)
                 
             else:
@@ -89,14 +90,14 @@ class CandidateGenerator:
                     print(f"        → 원본 우선 (Y축 활용도 더 좋음)")
                 
                 # 1. 원본 방향 먼저 시도
-                original_candidates = self._generate_candidates_for_orientation(block)
+                original_candidates = self._generate_candidates_for_orientation(block, max_candidates//2)
                 candidates.extend(original_candidates)
                 
                 # 2. 회전 방향 (가능한 경우만)
                 if can_rotate:
                     original_rotation = block.rotation
                     block.rotate()
-                    rotated_candidates = self._generate_candidates_for_orientation(block)
+                    rotated_candidates = self._generate_candidates_for_orientation(block, max_candidates//2)
                     candidates.extend(rotated_candidates)
                     block.rotation = original_rotation
 
@@ -114,36 +115,47 @@ class CandidateGenerator:
 
         return unique_candidates
 
-    def _generate_candidates_for_orientation(self, block):
+    def _generate_candidates_for_orientation(self, block, max_candidates=20):
         """
-        현재 블록 방향에 대한 후보 위치 생성 (Y축 우선으로 수정)
+        현재 블록 방향에 대한 후보 위치 생성 (최적화됨)
 
         Args:
             block (VoxelBlock): 배치할 블록
+            max_candidates (int): 최대 후보 위치 수
 
         Returns:
             list: (pos_x, pos_y, rotation, score) 형태의 후보 위치 목록
         """
         candidates = []
 
-        # BinPacking 기반 후보 위치 생성 (Y축 우선으로 수정)
-        # 1. 위쪽 왼쪽 모서리 우선 배치 (Top-Left 전략)
-        # 2. 기존 블록에 인접한 위치 우선 배치 (Adjacent 전략)
-        # 3. 배치 영역 경계 우선 배치 (Boundary 전략)
-
-        # 배치 영역 전체 탐색 (Y축 우선 배치를 위해 X축 먼저 순회)
-        for x in range(self.placement_area.width):
-            for y in range(self.placement_area.height):
-                # 해당 위치에 블록 배치 가능 여부 확인
+        # 성능 최적화: 전체 탐색 대신 매우 적극적인 샘플링 방식 사용 (120x80 대응)
+        step_x = max(3, self.placement_area.width // 10)  # 최대 10개 X 위치 (매우 성능 중시)
+        step_y = max(3, self.placement_area.height // 6)  # 최대 6개 Y 위치 (매우 성능 중시)
+        
+        # 1. 기본 후보 위치들 (샘플링)
+        for x in range(0, self.placement_area.width - block.width + 1, step_x):
+            for y in range(0, self.placement_area.height - block.height + 1, step_y):
                 if self.placement_area.can_place_block(block, x, y):
-                    # 휴리스틱 점수 계산
                     score = self._calculate_heuristic_score(block, x, y)
-
-                    # X값이 작을수록 높은 점수 부여 (Y축 방향 우선 배치)
                     x_bonus = 1.0 - (x / self.placement_area.width)
                     score *= (1.0 + x_bonus)
-
                     candidates.append((x, y, block.rotation, score))
+        
+        # 2. 특별 위치들 (모서리, 기존 블록 인접)
+        special_positions = [
+            (0, 0),  # 왼쪽 위
+            (0, self.placement_area.height - block.height),  # 왼쪽 아래
+            (self.placement_area.width - block.width, 0),  # 오른쪽 위
+        ]
+        
+        for x, y in special_positions:
+            if (0 <= x <= self.placement_area.width - block.width and 
+                0 <= y <= self.placement_area.height - block.height and
+                self.placement_area.can_place_block(block, x, y)):
+                score = self._calculate_heuristic_score(block, x, y)
+                x_bonus = 1.0 - (x / self.placement_area.width)
+                score *= (1.0 + x_bonus)
+                candidates.append((x, y, block.rotation, score))
 
         # 특별한 위치 추가: 이미 배치된 블록에 인접한 위치
         for placed_block_id, placed_block in self.placement_area.placed_blocks.items():

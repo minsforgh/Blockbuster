@@ -52,26 +52,44 @@ class VoxelBlock:
         self.width = self.max_x - self.min_x + 1
         self.height = self.max_y - self.min_y + 1
 
-    def rotate(self):
+    def rotate(self, angle=90):
         """
-        블록을 180도 회전
-        복셀 데이터의 좌표를 변환하여 회전 처리
+        블록을 지정된 각도만큼 시계방향 회전
+        
+        Args:
+            angle (int): 회전 각도 (90, 180, 270도 지원)
         """
         # 회전 상태 업데이트
-        self.rotation = (self.rotation + 180) % 360
+        self.rotation = (self.rotation + angle) % 360
 
         # 복셀 데이터 회전 처리
         rotated_data = []
 
-        # 현재 블록의 중심점 계산
-        center_x = (self.min_x + self.max_x) / 2
-        center_y = (self.min_y + self.max_y) / 2
-
-        for x, y, heights in self.voxel_data:
-            # 중심점 기준으로 180도 회전 (x, y) -> (-x, -y) + 중심점 보정
-            new_x = int(2 * center_x - x)
-            new_y = int(2 * center_y - y)
-            rotated_data.append((new_x, new_y, heights))
+        if angle == 90:
+            # 90도 시계방향 회전: (x, y) -> (y, -x) 
+            # 하지만 좌표를 양수로 유지하기 위해 보정 필요
+            for x, y, heights in self.voxel_data:
+                # 90도 회전: (x, y) -> (y, max_x - x)
+                new_x = y
+                new_y = self.max_x - x
+                rotated_data.append((new_x, new_y, heights))
+                
+        elif angle == 180:
+            # 180도 회전: (x, y) -> (max_x - x, max_y - y)
+            for x, y, heights in self.voxel_data:
+                new_x = self.max_x - x
+                new_y = self.max_y - y
+                rotated_data.append((new_x, new_y, heights))
+                
+        elif angle == 270:
+            # 270도 시계방향 회전: (x, y) -> (-y, x) -> (max_y - y, x)
+            for x, y, heights in self.voxel_data:
+                new_x = self.max_y - y
+                new_y = x
+                rotated_data.append((new_x, new_y, heights))
+        else:
+            # 지원하지 않는 각도인 경우 변경하지 않음
+            return
 
         self.voxel_data = rotated_data
         self._calculate_bounds()
@@ -84,6 +102,60 @@ class VoxelBlock:
             set: (x, y) 좌표 집합
         """
         return {(voxel[0], voxel[1]) for voxel in self.voxel_data}
+    
+    def get_boundary_footprint(self):
+        """
+        경계선 복셀만 추출 (성능 최적화용)
+        
+        Returns:
+            set: 경계선 2D 좌표 집합 {(x, y), ...}
+        """
+        if not hasattr(self, '_boundary_cache') or self._boundary_cache is None:
+            self._calculate_boundary_cache()
+        return self._boundary_cache
+    
+    def _calculate_boundary_cache(self):
+        """경계선 복셀 캐시 계산"""
+        footprint = self.get_footprint()
+        if not footprint:
+            self._boundary_cache = set()
+            return
+        
+        boundary = set()
+        
+        # 각 복셀에 대해 경계인지 확인
+        for x, y in footprint:
+            is_boundary = False
+            
+            # 8방향(상하좌우 대각선) 확인
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    if dx == 0 and dy == 0:
+                        continue
+                    
+                    neighbor = (x + dx, y + dy)
+                    if neighbor not in footprint:
+                        # 인접한 셀이 비어있으면 경계선
+                        is_boundary = True
+                        break
+                
+                if is_boundary:
+                    break
+            
+            if is_boundary:
+                boundary.add((x, y))
+        
+        self._boundary_cache = boundary
+        
+        # 통계 출력 (디버깅용)
+        total_voxels = len(footprint)
+        boundary_voxels = len(boundary)
+        reduction_rate = (1 - boundary_voxels/total_voxels) * 100 if total_voxels > 0 else 0
+        
+        print(f"[DEBUG] {self.id} 경계선 최적화:")
+        print(f"        전체 복셀: {total_voxels}")
+        print(f"        경계선 복셀: {boundary_voxels}")
+        print(f"        계산량 감소: {reduction_rate:.1f}%")
 
     def get_height_at(self, x, y):
         """

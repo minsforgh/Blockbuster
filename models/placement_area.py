@@ -82,48 +82,38 @@ class PlacementArea:
 
     def _check_transporter_access(self, block, pos_x, pos_y):
         """
-        트랜스포터 진입 가능성 확인
+        블록 접근성 확인
+        - 크레인 블록: 수직으로 내려놓을 수 있어서 경로 확보 불필요
+        - 트레슬 블록: 오른쪽에서 Y길이만큼 경로 폭 확보 필요
+        - 기타: 트레슬 블록과 동일한 조건
 
         Args:
             block (VoxelBlock): 배치할 블록
-            pos_x (int): 배치 위치 x 좌표
+            pos_x (int): 배치 위치 x 좌표  
             pos_y (int): 배치 위치 y 좌표
 
         Returns:
-            bool: 트랜스포터 진입 가능 여부
+            bool: 블록 접근 가능 여부
         """
-        # 간단한 구현: 배치 영역의 가장자리에서 블록까지 경로가 있는지 확인
-        # 실제 구현에서는 더 복잡한 경로 탐색 알고리즘 적용 필요
-
-        # 임시 그리드 생성 (현재 배치 상태 복사)
-        temp_grid = np.copy(self.grid)
-
-        # 블록이 배치될 위치 표시
-        footprint = block.get_footprint()
-        for vx, vy in footprint:
-            grid_x = pos_x + vx - block.min_x
-            grid_y = pos_y + vy - block.min_y
-
-            if 0 <= grid_x < self.width and 0 <= grid_y < self.height:
-                temp_grid[grid_y, grid_x] = "temp"
-
-        # 가장자리에서 시작하는 경로 탐색
-        # 간단한 구현: 블록 주변에 빈 공간이 있는지 확인
-        for vx, vy in footprint:
-            grid_x = pos_x + vx - block.min_x
-            grid_y = pos_y + vy - block.min_y
-
-            # 블록 주변 4방향 확인
-            for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-                nx, ny = grid_x + dx, grid_y + dy
-
-                # 배치 영역 내에 있고 빈 공간인 경우
-                if 0 <= nx < self.width and 0 <= ny < self.height and temp_grid[ny, nx] is None:
-                    # 가장자리까지 경로가 있는지 확인
-                    if self._has_path_to_edge(temp_grid, nx, ny):
-                        return True
-
-        return False
+        # 크레인 블록은 수직으로 내려놓을 수 있어서 경로 확보 불필요
+        if hasattr(block, 'block_type') and block.block_type == 'crane':
+            return True  # 크레인 블록은 항상 접근 가능
+        
+        # 트레슬 블록과 기타 블록은 트랜스포터 경로 확보 필요
+        # 블록의 Y 범위만 체크 (어제 버전과 동일)
+        block_y_start = pos_y
+        block_y_end = pos_y + block.height
+        
+        # 배치 영역 왼쪽 끝에서 블록의 왼쪽 끝까지 경로 확인
+        block_left_edge = pos_x
+        
+        # 왼쪽 끝에서 블록 위치까지 쭉 밀어넣을 수 있는지 확인 (Y 여유 포함)
+        for x in range(0, block_left_edge):
+            for y in range(block_y_start, block_y_end):
+                if y < 0 or y >= self.height or self.grid[y, x] is not None:
+                    return False
+        
+        return True
 
     def _has_path_to_edge(self, grid, start_x, start_y):
         """

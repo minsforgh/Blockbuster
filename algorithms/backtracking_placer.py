@@ -1,130 +1,199 @@
 """
-백트래킹 기반 블록 배치 알고리즘 모듈 (Y축 우선으로 수정)
+실용적인 백트래킹 배치 알고리즘
 """
 import time
 import copy
-from algorithms.candidate_generator import CandidateGenerator
 
 
-class BacktrackingPlacer:
-    """
-    백트래킹 기반 블록 배치 알고리즘 클래스 (Y축 우선)
-
-    Attributes:
-        placement_area (PlacementArea): 배치 영역
-        blocks (list): 배치할 블록 목록
-        candidate_generator (CandidateGenerator): 후보 위치 생성기
-        best_solution (PlacementArea): 최적 배치 결과
-        best_score (float): 최적 배치 점수
-        max_time (float): 최대 실행 시간 (초)
-        start_time (float): 알고리즘 시작 시간
-    """
-
+class PracticalBacktracking:
+    
     def __init__(self, placement_area, blocks, max_time=60):
-        """
-        BacktrackingPlacer 초기화
-
-        Args:
-            placement_area (PlacementArea): 배치 영역
-            blocks (list): 배치할 블록 목록
-            max_time (float): 최대 실행 시간 (초)
-        """
         self.placement_area = placement_area
         self.blocks = blocks
-        self.candidate_generator = CandidateGenerator(placement_area)
         self.best_solution = None
         self.best_score = 0
         self.max_time = max_time
         self.start_time = 0
-
-        # 배치 영역에 블록 추가
         self.placement_area.add_blocks(blocks)
-
+    
     def optimize(self):
-        """
-        백트래킹을 통한 최적 배치 탐색 (Y축 우선)
-
-        Returns:
-            PlacementArea: 최적 배치 결과
-        """
         self.start_time = time.time()
         self.best_solution = None
         self.best_score = 0
-
-        # 블록 배치 순서 결정 (Y축 우선으로 수정)
-        # 1. 높은 블록 우선 (높이 기준) - Y축 방향으로 먼저 채우기 위함
-        # 2. 대형 블록 우선 (면적 기준)
-        # 3. 복잡한 모양 우선 (면적 대비 복셀 수)
-        sorted_blocks = sorted(
-            self.blocks,
-            key=lambda block: (
-                block.height,  # 1차 기준: 높이 (Y축 방향 우선)
-                block.get_area(),  # 2차 기준: 면적
-                block.get_area() / (block.width * block.height)  # 3차 기준: 밀도
-            ),
-            reverse=True
-        )
-
-        # 초기 상태 설정
+        sorted_blocks = sorted(self.blocks, key=lambda b: -b.get_area())
+        print(f"[DEBUG] Starting backtrack with {len(sorted_blocks)} blocks")
         initial_area = copy.deepcopy(self.placement_area)
-
-        # 백트래킹 시작
-        self._backtrack(initial_area, sorted_blocks, 0)
-
+        try:
+            self._backtrack(initial_area, sorted_blocks, 0)
+        except Exception as e:
+            print(f"[DEBUG] Backtrack failed with error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        
+        # 부분 배치라도 최선의 결과를 반환
+        if self.best_solution is None:
+            # 아무것도 배치되지 않았다면 초기 상태라도 반환
+            self.best_solution = initial_area
+        
+        placed_count = len(self.best_solution.placed_blocks) if self.best_solution else 0
+        print(f"[DEBUG] Backtrack completed: {placed_count} blocks placed")
         return self.best_solution
-
-    def _backtrack(self, current_area, sorted_blocks, depth):
-        """
-        재귀적 백트래킹 함수
-
-        Args:
-            current_area (PlacementArea): 현재 배치 상태
-            sorted_blocks (list): 정렬된 블록 목록
-            depth (int): 현재 탐색 깊이
-        """
-        # 시간 제한 확인
+    
+    def _backtrack(self, current_area, blocks, depth):
         if time.time() - self.start_time > self.max_time:
-            return
-
-        # 현재 배치 상태의 점수 계산
+            return False
+        
+        # 현재 상태가 최선인지 확인 (블록 개수 우선, 점수 보조)
+        current_placed = len(current_area.placed_blocks)
         current_score = current_area.get_placement_score()
-
-        # 최적해 업데이트
-        if current_score > self.best_score:
+        best_placed = len(self.best_solution.placed_blocks) if self.best_solution else 0
+        
+        # 더 많은 블록이 배치되었거나, 같은 개수에서 더 좋은 점수면 업데이트
+        if (current_placed > best_placed or 
+            (current_placed == best_placed and current_score > self.best_score)):
             self.best_score = current_score
             self.best_solution = copy.deepcopy(current_area)
-
-        # 모든 블록이 배치된 경우
-        if depth >= len(sorted_blocks):
-            return
-
-        # 현재 배치할 블록
-        current_block = sorted_blocks[depth]
-
-        # 후보 위치 생성 (Y축 우선 휴리스틱 사용)
-        candidates = self.candidate_generator.generate_candidates(current_block)
-
-        # 각 후보 위치에 대해 시도
-        for pos_x, pos_y, rotation, _ in candidates:
-            # 원본 회전 상태 저장
-            original_rotation = current_block.rotation
-
-            # 블록 회전 설정
-            if current_block.rotation != rotation:
-                current_block.rotate()
-
-            # 블록 배치 시도
-            if current_area.place_block(current_block, pos_x, pos_y):
-                # 다음 블록으로 진행
-                self._backtrack(current_area, sorted_blocks, depth + 1)
-
-                # 백트래킹: 블록 제거
-                current_area.remove_block(current_block.id)
-
-            # 블록 회전 복원 (원래 상태로)
-            while current_block.rotation != original_rotation:
-                current_block.rotate()
-
-        # 현재 블록을 배치하지 않고 다음 블록으로 진행
-        # 이렇게 하면 특정 블록을 건너뛰고 다른 블록을 배치할 수 있음
-        self._backtrack(current_area, sorted_blocks, depth + 1)
+            if current_placed > 0:  # 0개 배치는 출력 안 함
+                print(f"[DEBUG] New best: {current_placed} blocks placed")
+        
+        if depth >= len(blocks):
+            return True
+        block = blocks[depth]
+        max_cands = min(40, len(current_area.placed_blocks) * 8 + 25)
+        candidates = self._get_simple_candidates(current_area, block, max_candidates=max_cands)
+        found_any_solution = False
+        
+        # 첫 번째 블록에서 후보가 없으면 알림
+        if depth == 0 and len(candidates) == 0:
+            print(f"[DEBUG] No candidates for first block {block.id} ({block.width}x{block.height})")
+        
+        if not candidates:
+            return False
+        for i, (pos_x, pos_y, should_rotate) in enumerate(candidates):
+            if time.time() - self.start_time > self.max_time:
+                return found_any_solution
+            original_rotation = block.rotation
+            if should_rotate and block.rotation == 0:
+                block.rotate()
+            if current_area.can_place_block(block, pos_x, pos_y):
+                current_area.place_block(block, pos_x, pos_y)
+                if self._backtrack(current_area, blocks, depth + 1):
+                    found_any_solution = True
+                    if depth + 1 >= len(blocks):
+                        current_area.remove_block(block.id)
+                        block.rotation = original_rotation
+                        return True
+                current_area.remove_block(block.id)
+            block.rotation = original_rotation
+        # 현재 블록을 건너뛰고 다음 블록으로 진행 (부분 배치 허용)
+        if self._backtrack(current_area, blocks, depth + 1):
+            found_any_solution = True
+        return found_any_solution
+    
+    def _get_simple_candidates(self, area, block, max_candidates=20):
+        candidates = []
+        placed_count = len(area.placed_blocks)
+        density_factor = min(2.0, 1.0 + placed_count * 0.1)
+        step_x = max(1, int(area.width // (15 * density_factor)))
+        step_y = max(1, int(area.height // (10 * density_factor)))
+        
+        base_positions = []
+        # 원본 방향으로 들어갈 수 있는 위치들
+        for x in range(area.width - block.width, -1, -step_x):
+            for y in range(0, area.height - block.height + 1, step_y):
+                base_positions.append((x, y))
+        
+        # 회전 방향으로 들어갈 수 있는 위치들 (블록이 정사각형이 아닌 경우)
+        if block.width != block.height:
+            for x in range(area.width - block.height, -1, -step_x):
+                for y in range(0, area.height - block.width + 1, step_y):
+                    base_positions.append((x, y))
+        
+        base_positions.sort(key=lambda pos: (-pos[0], pos[1]))
+        strategic_positions = []
+        placed_blocks = list(area.placed_blocks.values())
+        is_first_block = len(placed_blocks) == 0
+        
+        bow_clearance = getattr(area, 'bow_clearance', 0)
+        stern_clearance = getattr(area, 'stern_clearance', 0)
+        
+        if is_first_block:
+            # 원본 방향 시도
+            first_x = area.width - bow_clearance - block.width
+            first_y = 0
+            if first_x >= 0 and first_y >= 0 and first_y + block.height <= area.height:
+                strategic_positions.append((first_x, first_y))
+            
+            # 회전 방향 시도 (블록이 정사각형이 아닌 경우)
+            if block.width != block.height:
+                first_x_rot = area.width - bow_clearance - block.height
+                first_y_rot = 0
+                if first_x_rot >= 0 and first_y_rot >= 0 and first_y_rot + block.width <= area.height:
+                    strategic_positions.append((first_x_rot, first_y_rot))
+        
+        # 간단한 테스트 위치들도 추가
+        simple_positions = []
+        for test_x in [0, 5, 10, 20, 30]:
+            for test_y in [0, 5, 10]:
+                # 원본 방향
+                if (test_x + block.width <= area.width and 
+                    test_y + block.height <= area.height):
+                    simple_positions.append((test_x, test_y))
+                # 회전 방향 (블록이 정사각형이 아닌 경우)
+                elif (block.width != block.height and
+                      test_x + block.height <= area.width and 
+                      test_y + block.width <= area.height):
+                    simple_positions.append((test_x, test_y))
+        
+        all_positions = strategic_positions + base_positions + simple_positions
+        seen = set()
+        unique_positions = []
+        for pos in all_positions:
+            if pos not in seen:
+                seen.add(pos)
+                unique_positions.append(pos)
+        
+        candidates = []
+        for i, (x, y) in enumerate(unique_positions):
+            # 원본 방향 시도
+            if area.can_place_block(block, x, y):
+                score = self._calculate_quick_score(area, block, x, y)
+                candidates.append((x, y, False, score))
+            
+            # 회전 방향 시도 (블록이 정사각형이 아닌 경우)
+            if block.width != block.height:
+                original_rotation = block.rotation
+                block.rotate()
+                if area.can_place_block(block, x, y):
+                    score = self._calculate_quick_score(area, block, x, y)
+                    candidates.append((x, y, True, score))
+                block.rotation = original_rotation
+        candidates.sort(key=lambda c: (c[3], c[0], -c[1]), reverse=True)
+        final_candidates = [(x, y, rotate) for x, y, rotate, score in candidates[:max_candidates]]
+        return final_candidates
+    
+    def _calculate_quick_score(self, area, block, x, y):
+        score = 0
+        bow_clearance = getattr(area, 'bow_clearance', 0)
+        stern_clearance = getattr(area, 'stern_clearance', 0)
+        
+        right_preference = (x - stern_clearance) / (area.width - bow_clearance - stern_clearance)
+        score += right_preference * 100
+        bottom_preference = (area.height - y) / area.height
+        score += bottom_preference * 30
+        if x + block.width == area.width - bow_clearance:
+            score += 40
+        if y == 0:
+            score += 30
+        placed_blocks = list(area.placed_blocks.values())
+        if placed_blocks:
+            closest_distance = float('inf')
+            for placed_block in placed_blocks:
+                if placed_block.position:
+                    px, py = placed_block.position
+                    distance = abs(x - px) + abs(y - py)
+                    closest_distance = min(closest_distance, distance)
+            if closest_distance != float('inf'):
+                score += max(0, 20 - closest_distance * 2)
+        return score
