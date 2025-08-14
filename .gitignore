@@ -110,3 +110,24 @@ venv.bak/
 
 # Project specific
 results/*.png
+
+# Large files and compressed data
+fbx_blocks/converted_obj.zip
+fbx_blocks/converted_obj/
+*.zip
+*.rar
+*.7z
+
+# Result images and cache
+placement_results/
+voxel_results/
+voxel_results_improved/
+temp_voxel/
+config_voxel_temp/
+
+# Generated config files
+config_*.json
+
+# Large data files
+*.csv
+*.xlsx
