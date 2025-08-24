@@ -114,7 +114,67 @@ if (current_placed > best_placed or
 3. **코드 품질**: 77% 코드 감소로 유지보수성 대폭 향상
 4. **자동화**: Config 기반 완전 자동 실행 시스템
 
+## 🔥 최신 개발 세션 (2025-08-21)
+
+### ✅ Unity 통합 시스템 완성
+
+#### **1. Unity 블록 회전 시스템 완전 구현**
+- **Voxelizer 방향 최적화**: 바닥 접촉면 최대화를 위한 3가지 방향 분석 (XY, XZ, YZ 평면)
+- **Unity 회전 적용**: 복셀라이저 선택 방향에 따른 자동 회전
+  - `X_rotated` (YZ→바닥): `Quaternion.Euler(0, 0, 90)`
+  - `Y_rotated` (XZ→바닥): `Quaternion.Euler(90, 0, 0)`  
+  - `original` (XY→바닥): 회전 없음
+- **회전 축 중심점 수정**: 기하학적 중심 기준 회전으로 오브젝트 이동 문제 해결
+
+#### **2. 완전 자동화된 Unity JSON 생성**
+```bash
+# 한 번의 명령으로 배치 + Unity JSON 자동 생성
+python ship_placer.py config.json 30
+# → unity_선박명.json 자동 생성
+```
+
+**포함된 정보**:
+- **복셀라이저 방향 정보**: `voxelizer_info.selected_orientation`
+- **갑판 높이**: `y: 5.0` (블록이 바닥에 잠기지 않도록)
+- **이중 회전 시스템**: ship_placer 2D 회전 + 복셀라이저 3D 방향 최적화
+
+#### **3. Unity 코드 개선**
+**FBXBlockManager_Fixed.cs**:
+- 복셀라이저 캐시에서 방향 정보 자동 읽기
+- 기하학적 중심 기준 회전 (`CalculateGeometricCenter`)
+- 중심점 보정 회전 (`ApplyRotationAroundPoint`)
+
+**SimpleBlockTester.cs**:
+- 개별 블록 테스트 및 검증 기능
+- 실시간 디버그 로그 및 색상 구분
+
+### 🔧 기술적 성과
+
+#### **완전 통합 워크플로우**
+1. **Voxelizer**: FBX → 방향 최적화 → voxel_cache/*.json
+2. **ship_placer**: 배치 실행 → Unity JSON 자동 생성
+3. **Unity**: JSON 로드 → 복셀라이저 회전 자동 적용
+
+#### **수정된 파일들**
+- `export_unity_data.py`: 복셀라이저 정보 통합
+- `ship_placer.py`: Unity JSON 자동 생성 기능 추가  
+- `FBXBlockManager_Fixed.cs`: 중심점 보정 회전 시스템
+- `SimpleBlockTester.cs`: 테스트 및 검증 도구
+
+### ⚠️ 현재 이슈
+
+#### **복셀 캐시 버전 불일치**
+- **문제**: 기존 voxel_cache/*.json이 구버전 (selected_orientation 필드 없음)
+- **증상**: Unity JSON에서 모든 블록이 "original" 방향으로 표시
+- **해결책**: `python batch_voxelizer.py`로 최신 캐시 재생성 필요
+
+### 📋 다음 작업 계획
+
+1. **복셀 캐시 재생성**: 최신 Voxelizer로 전체 캐시 업데이트
+2. **실제 회전 효과 검증**: 키 큰 블록들의 방향 최적화 확인
+3. **Unity 배치 시뮬레이션 테스트**: 완전한 end-to-end 테스트
+
 ---
-*Last Updated: 2025-08-14*  
-*Current Status: 회전 기능 및 부분 배치 완료*  
-*Next Session: 프로젝트 정리 및 출력 표준화*
+*Last Updated: 2025-08-21*  
+*Current Status: Unity 통합 완료, 복셀 캐시 재생성 필요*  
+*Next Session: 복셀 캐시 업데이트 및 최종 검증*
