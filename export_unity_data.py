@@ -22,7 +22,7 @@ class UnityDataExporter:
     def __init__(self):
         self.result_data = None
         
-    def export_placement_result(self, config_path, output_path=None, max_time=30):
+    def export_placement_result(self, config_path, output_path=None, max_time=5):
         """배치 결과를 Unity용 JSON으로 변환"""
         print(f"[INFO] Unity 데이터 변환 시작...")
         print(f"       Config: {config_path}")
@@ -229,15 +229,17 @@ class UnityDataExporter:
     
     def _get_voxelizer_rotation(self, orientation):
         """복셀라이저 방향에 따른 Unity 회전값 반환"""
+        # 좌표계 변환: 복셀라이저(XY=바닥) → Unity(XZ=바닥)
+        
         if orientation == "X_rotated" or orientation == "yz_plane":
-            # YZ 평면을 바닥으로 (Z축 중심 90도 회전)
-            return {"x": 0, "y": 0, "z": 90}
+            # 복셀라이저 YZ 평면 → Unity XZ 평면 (Y축 중심 90도 회전)
+            return {"x": 0, "y": 90, "z": 0}
         elif orientation == "Y_rotated" or orientation == "xz_plane":
-            # XZ 평면을 바닥으로 (X축 중심 90도 회전)  
-            return {"x": 90, "y": 0, "z": 0}
-        else:  # "original" or "xy_plane"
-            # XY 평면을 바닥으로 (회전 없음)
+            # 복셀라이저 XZ 평면 → Unity XZ 평면 (이미 동일, 회전 없음)  
             return {"x": 0, "y": 0, "z": 0}
+        else:  # "original" or "xy_plane"
+            # 복셀라이저 XY 평면 → Unity XZ 평면 (X축 중심 -90도 회전)
+            return {"x": -90, "y": 0, "z": 0}
 
 def main():
     if len(sys.argv) < 2:
@@ -252,7 +254,7 @@ def main():
     
     config_path = sys.argv[1]
     output_path = sys.argv[2] if len(sys.argv) > 2 else None
-    max_time = int(sys.argv[3]) if len(sys.argv) > 3 else 30
+    max_time = int(sys.argv[3]) if len(sys.argv) > 3 else 5
     
     if not Path(config_path).exists():
         print(f"[ERROR] Config 파일을 찾을 수 없습니다: {config_path}")

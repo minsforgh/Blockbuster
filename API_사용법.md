@@ -85,7 +85,7 @@ config_path = generate_config(
 result = run_placement(config_path)
 
 # 시각화 포함 실행  
-result = run_placement(config_path, max_time=30, enable_visualization=True)
+result = run_placement(config_path, max_time=15, enable_visualization=True)
 
 # 결과 구조
 {

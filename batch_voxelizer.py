@@ -84,17 +84,9 @@ class BatchVoxelizer:
                 self.failed += 1
                 return False
             
-            # VoxelBlock 생성하여 메타데이터 추출
+            # VoxelBlock 생성하여 메타데이터 추출 (원본 방향 유지)
             voxel_block = VoxelBlock(block_name, voxel_data_25d)
-            
-            # 긴쪽이 Y가 되도록 자동 조정 (배치 성능 향상)
-            if voxel_block.width > voxel_block.height:
-                old_width, old_height = voxel_block.width, voxel_block.height
-                print(f"    [AUTO] Rotating block {block_name}: {old_width}x{old_height}", end="")
-                voxel_block.rotate(90)
-                print(f" -> {voxel_block.width}x{voxel_block.height}")
-                # 회전된 복셀 데이터로 업데이트
-                voxel_data_25d = voxel_block.voxel_data
+            print(f"    [INFO] Block {block_name}: {voxel_block.width}x{voxel_block.height} (원본 유지)")
             
             # 블록 타입 추정
             block_type = self.determine_block_type(block_name)

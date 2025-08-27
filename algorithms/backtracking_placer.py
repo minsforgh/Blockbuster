@@ -117,16 +117,30 @@ class PracticalBacktracking:
             if first_x >= 0 and first_y >= 0 and first_y + block.height <= area.height:
                 strategic_positions.append((first_x, first_y))
         
-        # 간단한 테스트 위치들도 추가
+        # 조밀한 테스트 위치들 추가 (Y축 짧은 배치에 최적화)
         simple_positions = []
-        for test_x in [0, 5, 10, 20, 30]:
-            for test_y in [0, 5, 10]:
-                # 원본 방향만
-                if (test_x + block.width <= area.width and 
-                    test_y + block.height <= area.height):
-                    simple_positions.append((test_x, test_y))
+        # 더 촘촘하게 위치 탐색
+        step_fine = max(1, min(block.width, block.height) // 4)  # 블록 크기에 비례
         
-        all_positions = strategic_positions + base_positions + simple_positions
+        for test_x in range(0, area.width - block.width + 1, step_fine):
+            for test_y in range(0, area.height - block.height + 1, step_fine):
+                simple_positions.append((test_x, test_y))
+        
+        # 모서리 우선 위치 추가 (공간 효율 향상)
+        edge_positions = []
+        # 왼쪽 벽에 붙이기
+        for test_y in range(0, area.height - block.height + 1, step_fine):
+            edge_positions.append((0, test_y))
+        # 아래쪽 벽에 붙이기  
+        for test_x in range(0, area.width - block.width + 1, step_fine):
+            edge_positions.append((test_x, 0))
+        # 오른쪽 벽에 붙이기 (선수 여백 고려)
+        right_x = area.width - bow_clearance - block.width
+        if right_x >= 0:
+            for test_y in range(0, area.height - block.height + 1, step_fine):
+                edge_positions.append((right_x, test_y))
+        
+        all_positions = strategic_positions + edge_positions + simple_positions + base_positions
         seen = set()
         unique_positions = []
         for pos in all_positions:
@@ -150,22 +164,44 @@ class PracticalBacktracking:
         bow_clearance = getattr(area, 'bow_clearance', 0)
         stern_clearance = getattr(area, 'stern_clearance', 0)
         
-        right_preference = (x - stern_clearance) / (area.width - bow_clearance - stern_clearance)
-        score += right_preference * 100
-        bottom_preference = (area.height - y) / area.height
-        score += bottom_preference * 30
+        # Y축 짧은 배치에 최적화된 점수 계산
+        
+        # 1. 오른쪽(선수) 방향 우선 (기존과 동일)
+        if area.width - bow_clearance - stern_clearance > 0:
+            right_preference = (x - stern_clearance) / (area.width - bow_clearance - stern_clearance)
+            score += right_preference * 100
+        
+        # 2. 아래쪽 우선 (Y축이 짧으므로 더 중요)
+        bottom_preference = (area.height - y - block.height) / area.height
+        score += bottom_preference * 50  # 가중치 증가
+        
+        # 3. 벽에 붙이기 보너스 (공간 효율성)
         if x + block.width == area.width - bow_clearance:
-            score += 40
+            score += 60  # 오른쪽 벽 붙이기 보너스 (선수 쪽부터 채우기)
         if y == 0:
-            score += 30
+            score += 50  # 아래쪽 벽 붙이기 보너스 증가
+        if y + block.height == area.height:
+            score += 30  # 위쪽 벽 붙이기 보너스
+        
+        # 4. 기존 블록과의 거리 고려 (적당히 가까이)
         placed_blocks = list(area.placed_blocks.values())
         if placed_blocks:
-            closest_distance = float('inf')
+            min_gap = float('inf')
             for placed_block in placed_blocks:
                 if placed_block.position:
                     px, py = placed_block.position
-                    distance = abs(x - px) + abs(y - py)
-                    closest_distance = min(closest_distance, distance)
-            if closest_distance != float('inf'):
-                score += max(0, 20 - closest_distance * 2)
+                    # 실제 이격거리 계산 (블록 크기 고려)
+                    x_gap = max(0, max(x - (px + placed_block.width), px - (x + block.width)))
+                    y_gap = max(0, max(y - (py + placed_block.height), py - (y + block.height)))
+                    gap = min(x_gap, y_gap) if x_gap > 0 or y_gap > 0 else 0
+                    min_gap = min(min_gap, gap)
+            
+            # 이격거리에 가까우면 보너스 (너무 멀면 패널티)
+            if min_gap != float('inf'):
+                block_spacing = getattr(area, 'block_spacing', 4)
+                if min_gap == block_spacing:
+                    score += 30  # 정확한 이격거리 보너스
+                elif min_gap > block_spacing * 2:
+                    score -= 20  # 너무 멀면 패널티
+                
         return score

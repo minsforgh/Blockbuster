@@ -84,9 +84,9 @@ def run_placement(config_path, max_time=5, enable_visualization=False):
         print(f"배치 못한 블록: {result['unplaced_blocks']}")
     """
     try:
-        # ShipPlacerConfig로 배치 실행
+        # ShipPlacerConfig로 배치 실행 (Unity JSON 생성하지 않음)
         placer = ShipPlacerConfig(config_path, verbose=False)
-        placement_result = placer.run(max_time=max_time, save_visualization=enable_visualization)
+        placement_result = placer.run(max_time=max_time, save_visualization=enable_visualization, export_unity=False)
         
         if placement_result:
             placed_count = len(placement_result.placed_blocks)

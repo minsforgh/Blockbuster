@@ -35,6 +35,190 @@ except ImportError as e:
     print(f"[INFO] Algorithm modules not found: {e}")
     ORIGINAL_ALGORITHM_AVAILABLE = False
 
+# Unity JSON 변환 클래스 추가
+class UnityJSONExporter:
+    """배치 결과를 Unity JSON으로 변환"""
+    
+    def export_from_result(self, result, config):
+        """ship_placer 결과를 Unity 형식으로 변환"""
+        # 선박 정보
+        ship_info = {
+            "name": config['ship_configuration']['name'],
+            "dimensions": {
+                "width_m": result.ship_width_m,
+                "height_m": result.ship_height_m,
+                "grid_unit": result.grid_resolution
+            },
+            "grid_size": {
+                "width": result.width,
+                "height": result.height
+            },
+            "constraints": {
+                "bow_clearance": result.bow_clearance,
+                "stern_clearance": result.stern_clearance,
+                "block_spacing": result.block_spacing
+            }
+        }
+        
+        # 배치된 블록들 변환
+        placed_blocks = []
+        for block in result.placed_blocks.values():
+            if block.position is None:
+                continue
+            
+            # 복셀라이저 방향 정보 가져오기    
+            voxelizer_orientation = self._get_voxelizer_orientation(block.id)
+                
+            block_data = {
+                "id": block.id,
+                "type": block.block_type,
+                "position": {
+                    "x": block.position[0],
+                    "y": block.position[1],
+                    "z": 0  # 2D 배치이므로 Z는 0
+                },
+                "dimensions": {
+                    "width": block.width,
+                    "height": block.height
+                },
+                "rotation": block.rotation,
+                "voxel_footprint": self._get_block_footprint(block),
+                "voxelizer_info": {
+                    "selected_orientation": voxelizer_orientation,
+                    "optimized_for_floor_contact": voxelizer_orientation != "original"
+                },
+                "unity_transform": self._calculate_unity_transform(block, result, voxelizer_orientation)
+            }
+            placed_blocks.append(block_data)
+        
+        # 배치되지 못한 블록들
+        unplaced_blocks = []
+        for block_id, block in result.unplaced_blocks.items():
+            unplaced_data = {
+                "id": block.id,
+                "type": block.block_type,
+                "dimensions": {
+                    "width": block.width,
+                    "height": block.height
+                },
+                "reason": "placement_failed"
+            }
+            unplaced_blocks.append(unplaced_data)
+        
+        # 애니메이션 순서 (배치 순서)
+        animation_sequence = []
+        for i, block_data in enumerate(placed_blocks):
+            animation_sequence.append({
+                "step": i,
+                "block_id": block_data["id"],
+                "delay": i * 0.5,  # 0.5초 간격
+                "duration": 1.0    # 1초 배치 애니메이션
+            })
+        
+        unity_data = {
+            "export_info": {
+                "timestamp": datetime.now().isoformat(),
+                "source": "ship_placer_backtracking",
+                "version": "1.0"
+            },
+            "ship_info": ship_info,
+            "placement_stats": {
+                "total_blocks": len(placed_blocks) + len(unplaced_blocks),
+                "placed_count": len(placed_blocks),
+                "unplaced_count": len(unplaced_blocks),
+                "success_rate": len(placed_blocks) / (len(placed_blocks) + len(unplaced_blocks)) * 100 if (len(placed_blocks) + len(unplaced_blocks)) > 0 else 0,
+                "placement_time": getattr(result, 'placement_time', 0)
+            },
+            "placed_blocks": placed_blocks,
+            "unplaced_blocks": unplaced_blocks,
+            "animation_sequence": animation_sequence
+        }
+        
+        return unity_data
+    
+    def _get_voxelizer_orientation(self, block_id):
+        """복셀라이저 캐시에서 선택된 방향 정보 가져오기"""
+        try:
+            cache_path = os.path.join("voxel_cache", f"{block_id}.json")
+            
+            if not os.path.exists(cache_path):
+                return "original"
+            
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            
+            # 복셀 데이터에서 방향 정보 추출
+            if "voxel_data" in cache_data and "selected_orientation" in cache_data["voxel_data"]:
+                return cache_data["voxel_data"]["selected_orientation"]
+            else:
+                return "original"
+                
+        except Exception:
+            return "original"
+    
+    def _get_block_footprint(self, block):
+        """블록의 실제 복셀 형태 정보"""
+        footprint = []
+        for rel_x, rel_y in block.get_footprint():
+            # 블록 내 상대 좌표로 변환
+            local_x = rel_x - block.min_x
+            local_y = rel_y - block.min_y
+            footprint.append({"x": local_x, "y": local_y})
+        return footprint
+    
+    def _calculate_unity_transform(self, block, result, voxelizer_orientation="original"):
+        """Unity에서 사용할 Transform 정보 계산"""
+        pos_x, pos_y = block.position
+        
+        # Unity 좌표계로 변환 (Unity는 Y가 위쪽)
+        unity_x = pos_x * result.grid_resolution
+        unity_z = pos_y * result.grid_resolution  # 2D의 Y -> Unity의 Z
+        unity_y = 5.0  # 선박 갑판 높이 - 블록이 바닥에 잠기지 않도록
+        
+        # 블록 중심으로 위치 조정
+        center_offset_x = (block.width * result.grid_resolution) / 2
+        center_offset_z = (block.height * result.grid_resolution) / 2
+        
+        # 복셀라이저 방향 최적화에 따른 회전값 계산
+        voxelizer_rotation = self._get_voxelizer_rotation(voxelizer_orientation)
+        
+        # ship_placer 회전 + 복셀라이저 방향 최적화 결합
+        ship_rotation_y = block.rotation * 90  # ship_placer 회전 (90도 단위)
+        
+        return {
+            "position": {
+                "x": unity_x + center_offset_x,
+                "y": unity_y,
+                "z": unity_z + center_offset_z
+            },
+            "rotation": {
+                "x": voxelizer_rotation["x"],
+                "y": ship_rotation_y + voxelizer_rotation["y"],  # 회전 조합
+                "z": voxelizer_rotation["z"]
+            },
+            "scale": {
+                "x": 1.0,
+                "y": 1.0,
+                "z": 1.0
+            },
+            "voxelizer_rotation": voxelizer_rotation,
+            "ship_placer_rotation": ship_rotation_y
+        }
+    
+    def _get_voxelizer_rotation(self, orientation):
+        """복셀라이저 방향에 따른 Unity 회전값 반환"""
+        # 좌표계 변환: 복셀라이저(XY=바닥) → Unity(XZ=바닥)
+        
+        if orientation == "X_rotated" or orientation == "yz_plane":
+            # 복셀라이저 YZ 평면 → Unity XZ 평면 (Y축 중심 90도 회전)
+            return {"x": 0, "y": 90, "z": 0}
+        elif orientation == "Y_rotated" or orientation == "xz_plane":
+            # 복셀라이저 XZ 평면 → Unity XZ 평면 (이미 동일, 회전 없음)  
+            return {"x": 0, "y": 0, "z": 0}
+        else:  # "original" or "xy_plane"
+            # 복셀라이저 XY 평면 → Unity XZ 평면 (X축 중심 -90도 회전)
+            return {"x": -90, "y": 0, "z": 0}
+
 class ShipPlacementAreaConfig(PlacementArea):
     """Config 기반 자항선 배치 영역"""
     
@@ -202,6 +386,14 @@ class ShipPlacerConfig:
                 # VoxelBlock 생성
                 block = VoxelBlock(block_id, voxel_data)
                 block.block_type = block_config['block_type']
+                
+                # Y축이 짧게 되도록 회전 처리 (height > width이면 90도 회전)
+                if block.height > block.width:
+                    print(f"[ROTATE] {block_id}: {block.width}x{block.height} → 90도 회전 → {block.height}x{block.width}")
+                    block.rotate(90)
+                else:
+                    print(f"[KEEP] {block_id}: {block.width}x{block.height} (회전 없음)")
+                
                 blocks.append(block)
         
         type_counts = defaultdict(int)
@@ -421,7 +613,7 @@ Performance:
         
         return fig
     
-    def run(self, max_time=60, save_visualization=False):
+    def run(self, max_time=60, save_visualization=False, export_unity=False):
         print(f"[INFO] Starting config-based ship placement with backtracking...")
         
         try:
@@ -445,6 +637,29 @@ Performance:
             elif not result:
                 print("[WARNING] No placement result to visualize")
             
+            # Unity JSON 생성
+            if result and export_unity:
+                try:
+                    unity_exporter = UnityJSONExporter()
+                    unity_data = unity_exporter.export_from_result(result, self.config)
+                    
+                    # 파일명 생성: unity_{선박명}.json
+                    ship_name = self.config['ship_configuration']['name']
+                    unity_filename = f"unity_{ship_name}.json"
+                    
+                    # JSON 저장
+                    with open(unity_filename, 'w', encoding='utf-8') as f:
+                        json.dump(unity_data, f, indent=2, ensure_ascii=False)
+                    
+                    placed_count = len(unity_data['placed_blocks'])
+                    total_count = unity_data['placement_stats']['total_blocks']
+                    
+                    print(f"[SUCCESS] Unity JSON 생성 완료: {unity_filename}")
+                    print(f"          배치된 블록: {placed_count}/{total_count}")
+                    
+                except Exception as e:
+                    print(f"[WARNING] Unity JSON 생성 실패: {e}")
+            
             return result
             
         except Exception as e:
@@ -460,17 +675,21 @@ def main():
         print("\nOptions:")
         print("  -v, --visualize    Enable visualization (default: disabled)")
         print("  --no-viz          Disable visualization (explicit)")
+        print("  -u, --unity       Export Unity JSON (default: disabled)")
+        print("  --no-unity        Disable Unity JSON export (explicit)")
         print("\nAlgorithm:")
         print("  backtracking - Precise placement with rotation support")
         print("\nExamples:")
-        print("  python ship_placer.py config.json 60")
-        print("  python ship_placer.py config.json 60 -v")
-        print("  python ship_placer.py config.json 60 --visualize")
+        print("  python ship_placer.py config.json 5")
+        print("  python ship_placer.py config.json 5 -v")
+        print("  python ship_placer.py config.json 5 --unity")
+        print("  python ship_placer.py config.json 5 -v --unity")
         return
     
     config_path = sys.argv[1]
     max_time = 5
     enable_visualization = False
+    export_unity = False
     
     # 인자 파싱
     for i, arg in enumerate(sys.argv[2:], start=2):
@@ -480,6 +699,10 @@ def main():
             enable_visualization = True
         elif arg == '--no-viz':
             enable_visualization = False
+        elif arg in ['-u', '--unity']:
+            export_unity = True
+        elif arg == '--no-unity':
+            export_unity = False
     
     if not Path(config_path).exists():
         print(f"[ERROR] Config file not found: {config_path}")
@@ -492,11 +715,12 @@ def main():
         print(f"Max time: {max_time}s")
         print(f"Algorithm: backtracking")
         print(f"Visualization: {'enabled' if enable_visualization else 'disabled'}")
+        print(f"Unity JSON: {'enabled' if export_unity else 'disabled'}")
         print("")
         
         # 배치 시스템 실행
         placer = ShipPlacerConfig(config_path)
-        result = placer.run(max_time=max_time, save_visualization=enable_visualization)
+        result = placer.run(max_time=max_time, save_visualization=enable_visualization, export_unity=export_unity)
         
         if result:
             placed_count = len(result.placed_blocks)
